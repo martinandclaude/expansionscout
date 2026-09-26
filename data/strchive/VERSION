@@ -1,0 +1,16 @@
+source: https://github.com/dashnowlab/STRchive
+file: data/STRchive-loci.json
+release: v2.26.1
+commit: d27dc84f4f627d4d5c1ac2da2d05d91a7293c812
+sha256: 306618801d03bb48eb69a206a9ea3d83dbbcc1317f7673a6f694c7de0b227794
+fetched: 2026-09-25
+checked: v2.26.1 is the latest release on 2026-09-25. The loci file is
+  byte-identical in v2.26.0 (d7961b2, the previous pin), v2.26.1 and main at
+  9cde1dd (2026-09-20); v2.26.1 added export formats (ExpansionHunter, STRkit,
+  UCSC bigBed) and did not change the catalogue itself.
+licence: STRchive data are CC BY 4.0 per the STRchive README; the repository
+  code licence (MIT) is reproduced in LICENSE.STRchive
+citation: Hiatt L, Weisburd B, Dolzhenko E, Rubinetti V, Avvaru AK, VanNoy GE,
+  Kurtas NE, Rehm HL, Quinlan AR, Dashnow H. STRchive: a dynamic resource
+  detailing population-level and locus-specific insights at tandem repeat
+  disease loci. Genome Medicine 2025;17(1):29. doi:10.1186/s13073-025-01454-4

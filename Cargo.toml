@@ -1,0 +1,35 @@
+[package]
+name = "expansionscout"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+description = "Targeted repeat-expansion calling from ONT BAMs, with methylation"
+license = "MIT"
+repository = "https://github.com/martinandclaude/expansionscout"
+publish = false
+
+[dependencies]
+clap = { version = "4.6", features = ["derive"] }
+libm = "0.2.16"
+noodles-bam = "0.95"
+noodles-bgzf = "0.51"
+noodles-core = "0.20"
+noodles-csi = "0.61"
+noodles-fasta = "0.66"
+noodles-sam = "0.90"
+regex = { version = "1.13", default-features = false, features = ["std", "perf"] }
+serde_json = { version = "1.0.151", features = ["preserve_order", "float_roundtrip"] }
+sha2 = "0.11"
+yaml-rust2 = "0.13"
+
+[[bin]]
+name = "expansionscout"
+path = "src/main.rs"
+
+[[bin]]
+name = "es"
+path = "src/bin/es.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1

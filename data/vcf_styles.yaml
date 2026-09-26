@@ -1,0 +1,90 @@
+# How expansionscout writes VCF, and who each dialect is for.
+#
+# One tool, several consumers, and they do not agree. A repeat genotype can be
+# written as an explicit allele sequence, as VCF 4.5's `<CNV:TR>` symbolic
+# allele, or as one of the tool-specific conventions that grew up before the
+# specification caught up. None of those is more correct than the others; they
+# are correct for different readers.
+#
+# So the dialect is data rather than a branch in the writer, on the same
+# principle as data/overlay.yaml: a new consumer is a few lines here, not a
+# patch to the writer.
+#
+# THE RULE, inherited from overlay.yaml: every style is written against a
+# published specification and carries the source it was verified against. There
+# are deliberately no styles named after a commercial platform: a style named
+# after a vendor is a claim about that vendor that only that vendor can settle.
+
+version: 1
+
+sources:
+
+  vcf45:
+    kind: specification
+    citation: "The Variant Call Format Specification, VCFv4.5"
+    url: https://samtools.github.io/hts-specs/VCFv4.5.pdf
+    repo: https://github.com/samtools/hts-specs
+    open_access: true
+    read_on: 2026-09-06
+    note: >-
+      Section on tandem repeats defines the `CNV:TR` symbolic allele and the
+      RN / RUS / RUL / RUC / RB / CIRUC / CIRB information fields, and
+      deprecates END in favour of SVLEN. SVLEN is defined for symbolic
+      structural alleles, so the `tr` style emits it and the sequence-allele
+      styles keep END, which stays legal and is what makes a record readable
+      without arithmetic.
+
+  vcf42:
+    kind: specification
+    citation: "The Variant Call Format Specification, VCFv4.2"
+    url: https://samtools.github.io/hts-specs/VCFv4.2.pdf
+    open_access: true
+    note: >-
+      Retained because a good deal of clinical tooling has not moved past it
+      and rejects a header it does not recognise.
+
+styles:
+
+  native:
+    fileformat: "4.5"
+    alt: sequence
+    default: true
+    verified: vcf45
+    description: >-
+      Everything the tool measured, as explicit allele sequences. The default,
+      and the only style that carries methylation, interruption structure,
+      dispersion and the lower bound. Written for us and for anyone
+      reanalysing our output; not written for an interpretation platform.
+    info: [END, LOCUS, GENE, MOTIF, REFMOTIF, MOTIFLEN, REGIME, REFCN,
+           NSPAN, NSPLIT, NPART, LB, LBSUP, DETECT, EVIDENCE, NEGREL, METHOD,
+           MINOR]
+    format: [GT, CN, CNR, SUP, SIZE, MAD, TAIL, NOISE, INT, INTPOS, PM, CLS,
+             MT, MU, MD, MF]
+
+  tr:
+    fileformat: "4.5"
+    alt: cnv_tr
+    verified: vcf45
+    description: >-
+      The specification's own tandem-repeat representation: `<CNV:TR>` alleles
+      with RN, RUS, RUL, RUC and RB, and CIRUC carrying the central 90 percent
+      of the per-read unit counts as the confidence interval. Use this where a
+      reader claims VCF 4.5 support and you would rather be conformant than
+      informative -- the sequence of each allele is not written, so anything
+      downstream that needs the actual bases should read the native style.
+    info: [SVLEN, RN, RUS, RUL, RUC, RB, CIRUC, LOCUS, GENE, REGIME, REFCN,
+           NSPAN, NSPLIT, NPART, LB, EVIDENCE, METHOD]
+    format: [GT, CN, CNR, SUP, SIZE, CLS]
+
+  conservative:
+    fileformat: "4.2"
+    alt: sequence
+    description: >-
+      Explicit allele sequences, no symbolic alleles, and only the fields a
+      general-purpose reader is likely to understand. 4.2 rather than 4.5 on
+      purpose: a reader that rejects an unfamiliar fileformat line rejects it
+      before reaching anything else, and a good deal of clinical tooling has
+      not moved past 4.2. Use it when something downstream will not take the
+      default, and read the native output for anything we actually measured.
+    info: [END, LOCUS, GENE, MOTIF, MOTIFLEN, REFCN, NSPAN, NSPLIT]
+    format: [GT, CN, SUP, CLS]

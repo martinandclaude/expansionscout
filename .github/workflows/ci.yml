@@ -1,0 +1,193 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Only the release job writes (it creates the GitHub release); everything else
+# reads the repository, and uploading a workflow artifact needs no token scope.
+permissions:
+  contents: read
+
+# A newer push to the same branch or PR cancels the run it supersedes. The
+# event name is part of the key so a push and the pull_request run it
+# triggers do not cancel each other.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    # Explicit, so every step runs with -e -o pipefail.
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: fmt, clippy, test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # rustup is on the runner and takes the toolchain, components and target
+      # from rust-toolchain.toml; no setup action is used, so nothing installs
+      # another toolchain over the pinned one.
+      - name: Install the pinned toolchain
+        run: |
+          rustup --version
+          rustup toolchain install
+          rustup show active-toolchain
+          want="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+          got="$(rustc --version | cut -d' ' -f2)"
+          echo "rust-toolchain.toml pins $want; rustc is $got"
+          test "$got" = "$want"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Restore everywhere, save only from the default branch, so PR runs
+          # do not evict its cache.
+          save-if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+      # cargo fmt takes no --locked: it resolves no dependencies.
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --release --locked
+      - name: Cargo.lock is unchanged
+        run: git diff --exit-code -- Cargo.lock
+
+  reproducible:
+    name: Reproducible static build
+    # Both builds run on this one runner, so this proves the binary does not
+    # depend on where the checkout is. build-static.sh links with the
+    # toolchain's own rust-lld and musl startup objects, so the image's cc and
+    # ld are not in the final link either (checked below); dependency build
+    # scripts are still compiled with the image's cc, which is one reason
+    # every job pins ubuntu-24.04 rather than ubuntu-latest.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      sha256: ${{ steps.compare.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: first
+          persist-credentials: false
+      # A second checkout at a deeper, longer path: an absolute path that
+      # build-static.sh failed to remap would change the bytes, and the length.
+      - uses: actions/checkout@v7
+        with:
+          path: elsewhere/second-checkout
+          persist-credentials: false
+      - name: Install the pinned toolchain
+        working-directory: first
+        run: |
+          rustup --version
+          rustup toolchain install
+          want="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+          got="$(rustc --version | cut -d' ' -f2)"
+          echo "rust-toolchain.toml pins $want; rustc is $got"
+          test "$got" = "$want"
+          rustup target list --installed | grep -x x86_64-unknown-linux-musl
+      # Dependency sources only: both binaries are built from a clean target
+      # directory.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: first -> target
+          cache-targets: "false"
+          save-if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+      - name: Build in the first checkout
+        run: first/build-static.sh
+      - name: Build in the second checkout
+        run: elsewhere/second-checkout/build-static.sh
+      - name: The two binaries are identical
+        id: compare
+        run: |
+          rel=target/x86_64-unknown-linux-musl/release/expansionscout
+          a="$(sha256sum < "first/$rel" | cut -d' ' -f1)"
+          b="$(sha256sum < "elsewhere/second-checkout/$rel" | cut -d' ' -f1)"
+          echo "first:  $a"
+          echo "second: $b"
+          if [ "$a" != "$b" ]; then
+            echo "::error::build-static.sh gave different binaries in two checkouts of one commit"
+            cmp -l "first/$rel" "elsewhere/second-checkout/$rel" | head -20 || true
+            exit 1
+          fi
+          # the final link was done by the pinned toolchain's lld, not the image's ld
+          readelf -p .comment "first/$rel" | grep -q 'Linker: LLD'
+          echo "sha256=$a" >> "$GITHUB_OUTPUT"
+          mkdir -p "$RUNNER_TEMP/dist"
+          cp "first/$rel" "$RUNNER_TEMP/dist/expansionscout"
+          cd "$RUNNER_TEMP/dist"
+          sha256sum expansionscout > expansionscout.sha256
+          sha256sum -c expansionscout.sha256
+          echo "### expansionscout static binary" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`$(cat expansionscout.sha256)\`" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: expansionscout-x86_64-unknown-linux-musl
+          path: |
+            ${{ runner.temp }}/dist/expansionscout
+            ${{ runner.temp }}/dist/expansionscout.sha256
+          if-no-files-found: error
+
+  release:
+    name: Release
+    # A tag vX.Y.Z publishes the static binary as a GitHub release. The binary
+    # is built a third time here and must match the two above bit for bit, so
+    # what is published is the binary anyone can rebuild from the tag.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [rust, reproducible]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: The tag names the crate's version
+        run: |
+          want="v$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
+          echo "Cargo.toml is $want; the tag is $GITHUB_REF_NAME"
+          test "$want" = "$GITHUB_REF_NAME"
+      - name: Install the pinned toolchain
+        run: |
+          rustup toolchain install
+          rustup target list --installed | grep -x x86_64-unknown-linux-musl
+      - name: Build
+        run: ./build-static.sh
+      - name: Same bytes as the reproducible build
+        run: |
+          got="$(sha256sum < target/x86_64-unknown-linux-musl/release/expansionscout | cut -d' ' -f1)"
+          want="${{ needs.reproducible.outputs.sha256 }}"
+          echo "release build: $got"
+          echo "reproducible:  $want"
+          test "$got" = "$want"
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/dist"
+          cp target/x86_64-unknown-linux-musl/release/expansionscout "$RUNNER_TEMP/dist/"
+          cd "$RUNNER_TEMP/dist"
+          sha256sum expansionscout > expansionscout.sha256
+          version="$(./expansionscout --version)"
+          cat > notes.md <<EOF
+          \`$version\`
+
+          Static binary for x86-64 Linux; it needs nothing installed. See the
+          README for how to download, check and run it.
+
+          SHA-256: \`$(cut -d' ' -f1 expansionscout.sha256)\`
+
+          The same bytes come from \`./build-static.sh\` in a checkout of this tag.
+
+          The binary carries the STRchive locus catalogue (CC BY 4.0): if you use it,
+          cite Hiatt et al., Genome Medicine 2025;17(1):29, doi:10.1186/s13073-025-01454-4.
+          See NOTICE.md.
+          EOF
+          gh release create "$GITHUB_REF_NAME" expansionscout expansionscout.sha256 \
+            --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "ExpansionScout $GITHUB_REF_NAME" --notes-file notes.md

@@ -1,0 +1,456 @@
+# What expansionscout adds to STRchive, and where every addition comes from.
+#
+# This file is the provenance record for the clinical layer of the tool.
+#
+# THE RULE: nothing appears in a clinical band label that cannot be cited.
+# Boundaries and labels are sourced separately, because they can come from
+# different places -- a boundary from the catalogue with a name from a
+# guideline is the common case.
+#
+# Four kinds of provenance:
+#
+#   catalogue   STRchive's own number, used unchanged. Vocabulary may be
+#               added on top; the boundary is STRchive's.
+#   guideline   A named clinical standard, with jurisdiction, section, and a
+#               verbatim quote so the number is checkable without the source.
+#               Guidelines differ between countries; that is expected and is
+#               why `jurisdiction` is mandatory.
+#   literature  A primary study, for statements a standard does not make.
+#   inhouse     Laboratory-local. NEVER used by default: a laboratory's own
+#               validated cut-points, listed by `provenance --inhouse`, and
+#               every label so derived is marked `[in-house]`.
+#
+# `discrepancies` at the end records where STRchive disagrees with a guideline,
+# with the reference sequence, or with itself. Those are NOT applied: the
+# catalogue is read as published, so results stay reproducible against the
+# real STRchive, and the disagreement is reported instead.
+
+version: 1
+
+sources:
+
+  strchive:
+    kind: catalogue
+    citation: "STRchive, vendored; see data/ for the pinned release"
+    open_access: true
+    note: "Boundaries as published. Not modified anywhere in this file."
+
+  acmg_fxs_2001:
+    kind: guideline
+    jurisdiction: "United States - American College of Medical Genetics"
+    citation: >-
+      Maddalena A, Richards CS, McGinniss MJ, et al. Technical standards and
+      guidelines for fragile X: the first of a series of disease-specific
+      supplements to the Standards and Guidelines for Clinical Genetics
+      Laboratories. Genet Med 2001;3:200-205.
+    pmid: 11388762
+    pmcid: PMC3110344
+    doi: 10.1097/00125817-200105000-00010
+    open_access: true
+
+  emqn_hd_2013:
+    kind: guideline
+    jurisdiction: "Europe - EMQN / CMGS"
+    citation: >-
+      Losekoot M, van Belzen MJ, Seneca S, et al. EMQN/CMGS best practice
+      guidelines for the molecular genetic testing of Huntington disease.
+      Eur J Hum Genet 2013;21:480-486.
+    pmid: 22990145
+    pmcid: PMC3641377
+    doi: 10.1038/ejhg.2012.200
+    open_access: true
+
+  emqn_dm_2012:
+    kind: guideline
+    jurisdiction: "Europe - EMQN"
+    citation: >-
+      Kamsteeg EJ, Kress W, Catalli C, et al. Best practice guidelines and
+      recommendations on the molecular diagnosis of myotonic dystrophy types 1
+      and 2. Eur J Hum Genet 2012;20:1203-1208.
+    pmid: 22643181
+    pmcid: PMC3499739
+    doi: 10.1038/ejhg.2012.108
+    open_access: true
+
+  blauw_nipa1_2012:
+    kind: literature
+    citation: >-
+      Blauw HM, van Rheenen W, Koppers M, et al. NIPA1 polyalanine repeat
+      expansions are associated with amyotrophic lateral sclerosis.
+      Hum Mol Genet 2012;21:2497-2502.
+    pmid: 22378146
+    doi: 10.1093/hmg/dds064
+    open_access: false
+
+  tazelaar_nipa1_2019:
+    kind: literature
+    citation: >-
+      Tazelaar GHP, Dekker AM, van Vugt JJFA, et al. Association of NIPA1
+      repeat expansions with amyotrophic lateral sclerosis in a large
+      international cohort. Neurobiol Aging 2019;74:234.e9-234.e15.
+    pmid: 30342764
+    pmcid: PMC7893598
+    doi: 10.1016/j.neurobiolaging.2018.09.012
+    open_access: false
+
+  nel_nipa1_2021:
+    kind: literature
+    citation: >-
+      Nel M, Mavundla T, Gultig K, et al. Repeat expansions in ATXN2, NOP56,
+      NIPA1 and ATXN1 are not associated with ALS in Africa.
+      IBRO Neurosci Rep 2021;10:130-135.
+    pmid: 34179866
+    pmcid: PMC8211917
+    doi: 10.1016/j.ibneur.2021.02.002
+    open_access: true
+
+  russ_c9_2015:
+    kind: literature
+    citation: >-
+      Russ J, Liu EY, Wu K, et al. Hypermethylation of repeat expanded C9orf72
+      is a clinical and molecular disease modifier. Acta Neuropathol
+      2015;129:39-52.
+    pmid: 25388784
+    doi: 10.1007/s00401-014-1365-0
+    open_access: false
+
+  udine_c9_2024:
+    kind: literature
+    citation: >-
+      Udine E, et al. Targeted long-read sequencing to quantify methylation of
+      the C9orf72 repeat expansion. Mol Neurodegener 2024;19:99.
+    doi: 10.1186/s13024-024-00790-0
+    open_access: true
+
+  barbe_dm1_2017:
+    kind: literature
+    citation: >-
+      Barbe L, Lanni S, Lopez-Castel A, et al. CpG methylation, a parent-of-
+      origin effect for maternal-biased transmission of congenital myotonic
+      dystrophy. Am J Hum Genet 2017;100:488-505.
+    pmid: 28257691
+    doi: 10.1016/j.ajhg.2017.01.033
+    open_access: true
+
+  su_mastrseq_2026:
+    kind: literature
+    citation: >-
+      Su C, Ryu H-S, Chandradoss KR, et al. MASTR-seq enables multiplexed
+      analysis of short tandem repeats with sequencing. Cell Rep Methods
+      2026;6:101341.
+    pmid: null
+    doi: 10.1016/j.crmeth.2026.101341
+    open_access: true
+
+  ucsc_cpg:
+    kind: literature
+    citation: "UCSC Genome Browser, cpgIslandExt track, GRCh38"
+    open_access: true
+
+# ---------------------------------------------------------------------------
+
+loci:
+
+  FXS_FMR1:
+    aliases: [FMR1_CGG]
+    interruptions_gene: [AGG]
+    methylation:
+      relevant: true
+      # 630 bp upstream, on the plus strand, so the window is
+      # chrX:147,911,419-147,912,049 and fully contains the promoter region
+      # Su et al. use for this locus: "the 500 bp FMR1 promoter (hg38,
+      # chrX: 147911419-147911919)", 19 CpG sites, 500 bp upstream to the TSS.
+      # The extra 130 bp is the 5'UTR between that boundary and the tract.
+      # The promoter, not the tract, is what the clinical literature and
+      # methylation arrays measure.
+      up_bp: 630
+      down_bp: 0
+      note: >-
+        Hypermethylation silences the gene and distinguishes a full mutation
+        from a premutation of similar length. THE PROMOTER IS THE CLINICAL
+        MEASUREMENT and the tract is not. The ACMG standard specifies the
+        readout as methylation-sensitive restriction sites - EagI, BssHII,
+        NruI - within the EcoRI fragment, read by Southern blot, and every one
+        of those sites is in the promoter window: SacII chrX:147,911,572,
+        NruI 147,911,667, EagI 147,911,766, BssHII 147,911,782/790/792. There
+        are NO methylation-sensitive sites of any of those enzymes inside the
+        CGG tract, verified against GRCh38 on 2026-09-05. Tract methylation is
+        a long-read-only measurement that no established assay reads, and it is
+        where basecalling models disagree by an order of magnitude - so it is
+        reported as context and must not be quoted as a clinical result.
+      source: acmg_fxs_2001
+      window_source: su_mastrseq_2026
+      clinical_window: up
+    bands:
+      - upper: 44
+        label: "normal"
+        boundary: {source: strchive, field: benign_max}
+        naming:   {source: acmg_fxs_2001, section: "3.1.2",
+                   quote: "The range from ~45 to ~54 is a Gray Zone"}
+      - upper: 54
+        label: "gray zone"
+        boundary: {source: acmg_fxs_2001, section: "3.1.2",
+                   quote: "The range from ~45 to ~54 is a Gray Zone (Intermediate, Inconclusive, Borderline)",
+                   note: "the standard writes the boundary as approximate"}
+        naming:   {source: acmg_fxs_2001, section: "3.1.2"}
+      - upper: 200
+        label: "premutation"
+        boundary: {source: acmg_fxs_2001, section: "3.1.3",
+                   quote: "Premutation alleles range from ~55 to ~200 repeats"}
+        naming:   {source: acmg_fxs_2001, section: "3.1.3"}
+      - upper: null
+        label: "full mutation"
+        boundary: {source: acmg_fxs_2001, section: "3.1.3"}
+        naming:   {source: acmg_fxs_2001, section: "3.1.4"}
+    caveats:
+      - "Full-mutation alleles are multi-kb; spanning reads may be absent. Read
+         the partial-read lower bound and the detectability number, not only
+         the alleles."
+
+  HD_HTT:
+    aliases: [HTT_CAG]
+    interruptions_gene: [CAA]
+    interruptions_in_size: false
+    interruptions_in_size_source:
+      source: emqn_hd_2013
+      note: "HD is quoted as the pure CAG count; the CAACAG is not part of it."
+    methylation: {relevant: false, up_bp: 0, down_bp: 0, note: ""}
+    bands:
+      - upper: 26
+        label: "normal"
+        boundary: {source: strchive, field: benign_max}
+        naming:   {source: emqn_hd_2013, section: "Table 1"}
+      - upper: 35
+        label: "intermediate"
+        boundary: {source: strchive, field: intermediate_max}
+        naming:   {source: emqn_hd_2013, section: "Table 1",
+                   quote: "Intermediate or mutable normal allele"}
+      - upper: 39
+        label: "reduced penetrance"
+        boundary: {source: emqn_hd_2013, section: "Table 1",
+                   quote: "36-39 incomplete penetrance allele ... in range of reduced penetrance"}
+        naming:   {source: emqn_hd_2013, section: "Table 1"}
+      - upper: null
+        label: "complete penetrance"
+        boundary: {source: emqn_hd_2013, section: "Table 1",
+                   quote: "40 and over complete penetrance allele ... Will develop HD"}
+        naming:   {source: emqn_hd_2013, section: "Table 1"}
+    caveats:
+      - "Loss of the CAA interruption shifts age of onset; it is scored per read."
+      - "The guideline warns against predicting onset from repeat size."
+
+  DM1_DMPK:
+    aliases: [DMPK_CTG]
+    interruptions_gene: []
+    methylation:
+      relevant: true
+      up_bp: 200
+      down_bp: 50
+      note: >-
+        Methylation flanking the CTG repeat is strongly associated with
+        congenital DM1, and in blood was a better indicator of it than repeat
+        size; methylation on the gene-5' side was seen only on maternally
+        derived alleles. DMPK is on the minus strand, so the gene-5' window is
+        the higher-coordinate flank.
+      source: barbe_dm1_2017
+    bands:
+      # The guideline's boundaries, not the catalogue's -- they differ by one
+      # unit at both edges and the disagreement is recorded under
+      # `discrepancies` rather than reconciled silently.
+      - upper: 35
+        label: "normal"
+        boundary: {source: emqn_dm_2012, section: "Table 1",
+                   quote: "5-35 (normal range) | Stable | No DM"}
+        naming:   {source: emqn_dm_2012, section: "Table 1"}
+      - upper: 50
+        label: "unstable, unaffected"
+        boundary: {source: emqn_dm_2012, section: "Table 1",
+                   quote: "36-50 | May be unstable | No DM"}
+        naming:   {source: emqn_dm_2012, section: "Table 1"}
+      - upper: 150
+        label: "no, minimal or classical DM1"
+        boundary: {source: emqn_dm_2012, section: "Table 1",
+                   quote: "51-150 | Unstable | No, minimal or classical DM"}
+        naming:   {source: emqn_dm_2012, section: "Table 1"}
+      - upper: null
+        label: "classical, juvenile or congenital DM1"
+        boundary: {source: emqn_dm_2012, section: "Table 1",
+                   quote: "greater than 150 | Unstable | Classical, juvenile or congenital DM"}
+        naming:   {source: emqn_dm_2012, section: "Table 1"}
+    caveats:
+      - "Pathogenic alleles routinely exceed read length; see detectability."
+      - "The guideline states that predictions of severity or age of onset from
+         repeat size must not appear in a report. The bands above name the
+         phenotypes seen in a size range; they are not a prognosis."
+
+  ALS1_NIPA1:
+    interruptions_gene: []
+    methylation: {relevant: false, up_bp: 0, down_bp: 0, note: ""}
+    bands:
+      # Boundaries are the catalogue's, unchanged. Only the verdict on the
+      # upper band is ours to justify, and it is contested in the literature
+      # in both directions, which is what the label says.
+      - upper: 10
+        label: "normal"
+        boundary: {source: strchive, field: benign_max}
+        naming:   {source: strchive}
+      - upper: 56
+        label: "uncertain significance (contested association)"
+        boundary: {source: strchive, field: pathogenic_max}
+        naming:
+          source: nel_nipa1_2021
+          also: [blauw_nipa1_2012, tazelaar_nipa1_2019]
+          note: >-
+            Blauw 2012 and Tazelaar 2019 report an association of NIPA1
+            polyalanine expansions with ALS; Nel 2021 does not replicate it.
+            The catalogue calls this band pathogenic. Reporting a contested
+            association as pathogenic overstates it, so the band is relabelled
+            without moving the boundary.
+      - upper: null
+        label: "expanded"
+        boundary: {source: strchive, field: pathogenic_max}
+        naming:   {source: strchive}
+
+  FTDALS1_C9orf72:
+    aliases: [C9ORF72_G4C2, C9ORF72]
+    interruptions_gene: []
+    methylation:
+      relevant: true
+      up_bp: 500
+      down_bp: 50
+      note: >-
+        Hypermethylation of the CpG island gene-5' of the G4C2 repeat is seen
+        on expanded alleles. C9orf72 is on the minus strand, so gene-5' is the
+        HIGHER-coordinate flank: the island at chr9:27,573,761-27,573,989
+        (GRCh38, UCSC cpgIslandExt), which begins 215 bp past the tract end,
+        hence a 500 bp window. A second island sits below the tract
+        (chr9:27,572,968-27,573,482) at the exon-1b promoter; that is the
+        gene-3' side and is not the same signal. The expansion itself is also
+        methylated on expanded alleles.
+      source: russ_c9_2015
+      also: [udine_c9_2024, ucsc_cpg]
+    # NO BANDS. There is no clinical standard for C9orf72 sizing to cite, so
+    # the catalogue's benign / intermediate / pathogenic split is used, which
+    # is STRchive's and therefore sourced. The clinical nuance is a caveat: a
+    # statement about uncertainty rather than a label carrying authority.
+    caveats:
+      - "Pathogenic alleles are hundreds to thousands of units and routinely
+         exceed read length; a normal call with low detectability is not
+         negative evidence."
+      - "The significance of alleles in the catalogue's intermediate range
+         (24-30 units) is genuinely uncertain and is debated in the
+         literature; no clinical standard defines a band here."
+
+  SCA1_ATXN1:
+    aliases: [ATXN1_CAG]
+    interruptions_gene: [CAT]
+    interruptions_in_size: false
+    interruptions_in_size_source:
+      source: strchive
+      note: >-
+        SCA1 risk follows the pure CAG tract; CAT interruptions are benign and
+        are not counted toward the pathogenic size. The catalogue records CAT
+        as the interruption motif for this locus.
+    methylation: {relevant: false, up_bp: 0, down_bp: 0, note: ""}
+    # NO BANDS. There is no open-access clinical standard for SCA1 sizing to
+    # cite, so the catalogue's own three-way split is used.
+    caveats:
+      - "Polarity is opposite FMR1: pure CAG is the concern; CAT-interrupted
+         long alleles are benign."
+
+  GDPAG_GLS:
+    aliases: [GLS_GCA]
+    interruptions_gene: []
+    methylation:
+      relevant: true
+      up_bp: 500
+      down_bp: 100
+      note: >-
+        Promoter / 5'UTR CpG-island hypermethylation of the expanded allele is
+        the mechanistically relevant direction; not a validated clinical
+        discriminator.
+      source: null
+    caveats:
+      - "Recessive: one expanded allele is not diagnostic."
+      - "The expansion can sit inside a tandem exon-1 amplification; check
+         depth for a CN plateau."
+
+# ---------------------------------------------------------------------------
+# In-house boundaries. NOT used by default, and every label
+# derived from one is marked "[in-house]" in the output. This is where a
+# laboratory puts its own validated cut-points; it is also where our own
+# uncitable numbers go, so that they are visibly ours rather than passing as
+# a standard.
+# ---------------------------------------------------------------------------
+
+inhouse:
+  DM1_DMPK:
+    bands:
+      - upper: 35
+        label: "normal"
+      - upper: 50
+        label: "unstable, unaffected"
+      - upper: 150
+        label: "no, minimal or classical DM1"
+      - upper: 1000
+        label: "classical DM1 range"
+        rationale: >-
+          Widely quoted in review articles as the classical/congenital split
+          and used here before this file existed. NO SOURCE FOUND: the EMQN
+          2012 guideline stops at ">150" and does not separate congenital by
+          repeat size at all. The ACMG 2024 DM1 technical standard may carry
+          it and is paywalled. Kept here rather than deleted so the number is
+          not lost, and kept OUT of the default bands so it is never reported
+          as though a standard said it.
+      - upper: null
+        label: "congenital range"
+        rationale: "Same as above."
+
+# ---------------------------------------------------------------------------
+# Where STRchive disagrees with a guideline, with the reference sequence, or with itself.
+#
+# NONE OF THESE ARE APPLIED to the catalogue as loaded: STRchive is read as
+# published, so results stay reproducible against the real catalogue. They
+# are reported by `expansionscout provenance --discrepancies`.
+# ---------------------------------------------------------------------------
+
+discrepancies:
+  - locus: DM1_DMPK
+    kind: convention_differs
+    applied: false
+    field: benign_max
+    catalogue: 34
+    other: 35
+    other_source: emqn_dm_2012
+    note: >-
+      Not an error in either source. The catalogue puts the normal ceiling at
+      34 and the guideline at 35. A one-unit difference at a boundary is
+      exactly the kind of thing that changes a report, and neither number is
+      wrong. expansionscout's bands follow the guideline here; its thresholds
+      (pathogenic_min, used by the benchmark) follow the catalogue, so both
+      are visible.
+
+  - locus: DM1_DMPK
+    kind: convention_differs
+    applied: false
+    field: intermediate_max
+    catalogue: 49
+    other: 50
+    other_source: emqn_dm_2012
+    note: "As above, at the other edge of the same band."
+
+  - locus: ADTKD_MUC1
+    kind: catalogue_inconsistent
+    applied: false
+    field: motif_len
+    catalogue: 61
+    other: 60
+    other_source: strchive
+    note: >-
+      The record disagrees with itself. Its details say "This VNTR has a 60 bp
+      motif", and its reference and benign motifs are 60 bp, but motif_len is
+      61, the length of its pathogenic motif, which carries the disease's (C)8
+      where the repeat has (C)7. Read as published, the locus is counted in
+      61 bp units, about 1.6 % fewer units than the tract holds, and the 60 bp
+      motifs, which cannot be matched at that length, are dropped. No length
+      threshold is given for this locus, so no classification depends on it.
