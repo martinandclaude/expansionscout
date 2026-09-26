@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ExpansionScout — targeted repeat-expansion calling from ONT reads</title>
+<meta name="description" content="Targeted repeat-expansion calling from Oxford Nanopore BAM files, with per-allele methylation, lower bounds from clipped reads, and an explicit detectability statistic.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; }
+  :root {
+    --bg: #07090f; --panel: #0c111b; --line: #171d29; --line2: #223047;
+    --fg: #e7ecf3; --muted: #aeb9ca; --dim: #7b879b; --faint: #3d4657;
+    --green: #2bd67b; --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .page { background: var(--bg); color: var(--fg); font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, Helvetica, sans-serif; min-height: 100%; overflow-x: hidden; }
+  a { color: inherit; }
+  .wrap { position: relative; max-width: 1080px; margin: 0 auto; padding: 0 40px; }
+
+  /* hero */
+  .hero { position: relative; overflow: hidden; border-bottom: 1px solid var(--line); }
+  .hero-glow { position: absolute; inset: -40% -10% auto -10%; height: 900px; pointer-events: none;
+    background: radial-gradient(60% 55% at 50% 0%, rgba(120,90,255,0.28), rgba(7,9,15,0) 70%),
+                radial-gradient(40% 40% at 15% 20%, rgba(255,60,60,0.14), rgba(7,9,15,0) 70%),
+                radial-gradient(40% 40% at 85% 25%, rgba(43,214,123,0.14), rgba(7,9,15,0) 70%); }
+  .hero-grid { position: absolute; inset: 0; pointer-events: none;
+    background-image: linear-gradient(#0e1420 1px, transparent 1px), linear-gradient(90deg, #0e1420 1px, transparent 1px);
+    background-size: 64px 64px;
+    -webkit-mask-image: radial-gradient(70% 60% at 50% 30%, #000 20%, transparent 80%);
+    mask-image: radial-gradient(70% 60% at 50% 30%, #000 20%, transparent 80%); }
+  .hero-inner { position: relative; padding: 34px 40px 76px; display: flex; flex-direction: column; gap: 34px; max-width: 1080px; margin: 0 auto; }
+
+  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; font-size: 13px; letter-spacing: 0.02em; flex-wrap: wrap; }
+  .repo { display: flex; align-items: center; gap: 10px; font-family: var(--mono); color: var(--dim); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 12px var(--green); }
+  .nav { display: flex; gap: 22px; font-family: var(--mono); color: var(--dim); }
+  .nav a { text-decoration: none; }
+  .nav a:hover { color: var(--fg); }
+
+  .lockup { display: flex; flex-direction: column; align-items: center; gap: 26px; text-align: center; padding-top: 18px; }
+  .mark { position: relative; display: flex; align-items: center; justify-content: center; gap: 30px; padding: 14px 0 6px; flex-wrap: wrap; }
+  .mark-glow { position: absolute; inset: -30% 10%; filter: blur(70px); opacity: 0.3; border-radius: 999px; pointer-events: none;
+    background: conic-gradient(from 200deg, #ff4d4d, #ff9d1f, #ffe14d, #37e58b, #45c8ff, #6b78ff, #a855f7, #ff4d4d); }
+  .bars { position: relative; display: flex; align-items: flex-end; gap: 8px; height: 92px; }
+  .bars i { width: 14px; border-radius: 7px; display: block; }
+  .wordmark { position: relative; display: flex; flex-direction: column; gap: 8px; text-align: left; }
+  .wordmark h1 { margin: 0; font-size: clamp(34px, 10.5vw, 76px); font-weight: 700; letter-spacing: -0.04em; line-height: 1;
+    background: linear-gradient(95deg, #ff4d4d, #ff9d1f, #ffe14d, #37e58b, #45c8ff, #6b78ff, #a855f7);
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .wordmark .sub { font-family: var(--mono); font-size: 15px; letter-spacing: 0.1em; color: var(--dim); }
+  .tagline { margin: 0; max-width: 660px; font-size: 20px; line-height: 1.55; color: var(--muted); text-wrap: pretty; }
+
+  .badges { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; font-family: var(--mono); font-size: 12px; }
+  .badge { display: flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line2); background: var(--panel); color: #cfd8e6; }
+
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+  .btn { text-decoration: none; font-size: 14px; padding: 11px 20px; border-radius: 10px; border: 1px solid transparent; transition: .15s; }
+  .btn-primary { background: linear-gradient(95deg, #6b78ff, #a855f7); color: #fff; font-weight: 500; }
+  .btn-primary:hover { filter: brightness(1.08); transform: translateY(-1px); }
+  .btn-ghost { border-color: var(--line2); color: #cfd8e6; }
+  .btn-ghost:hover { border-color: #3c4a6b; }
+
+  /* body */
+  .body { padding: 64px 0 0; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; }
+  .card { border: 1px solid var(--line); background: var(--panel); border-radius: 14px; padding: 22px; }
+  .card .ico { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; margin-bottom: 14px; font-size: 16px; }
+  .card h3 { margin: 0 0 8px; font-size: 17px; font-weight: 500; }
+  .card p { margin: 0; font-size: 14.5px; line-height: 1.6; color: var(--muted); }
+
+  section { padding: 62px 0 0; scroll-margin-top: 20px; }
+  .shead { display: flex; align-items: baseline; gap: 14px; margin-bottom: 20px; }
+  .shead span { font-family: var(--mono); font-size: 12px; color: var(--faint); }
+  .shead h2 { margin: 0; font-size: 28px; font-weight: 500; letter-spacing: -0.02em; }
+  .lede { margin: 0 0 18px; color: var(--muted); font-size: 15.5px; line-height: 1.6; max-width: 720px; }
+
+  .term { border: 1px solid var(--line); background: #0a0e17; border-radius: 12px; overflow: hidden; }
+  .term-bar { display: flex; align-items: center; gap: 7px; padding: 10px 14px; border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 11.5px; color: var(--dim); }
+  .term-bar i { width: 10px; height: 10px; border-radius: 50%; display: block; }
+  .term-bar .lbl { margin-left: 6px; }
+  .term-bar .right { margin-left: auto; }
+  pre { margin: 0; padding: 18px; font-family: var(--mono); font-size: 13px; line-height: 1.75; color: #cfd8e6; overflow-x: auto; }
+  pre .c { color: #55617a; }
+  pre .p { color: var(--green); }
+  pre .f { color: #45c8ff; }
+  pre .o { color: #7b879b; }
+
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-bottom: 22px; }
+  .step { border: 1px solid var(--line); border-radius: 12px; padding: 18px; background: var(--panel); }
+  .step .n { font-family: var(--mono); font-size: 11px; color: var(--faint); letter-spacing: .08em; }
+  .step .t { margin: 8px 0 6px; font-size: 15px; }
+  .step .d { font-size: 13.5px; line-height: 1.55; color: var(--muted); }
+
+  .tablewrap { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .tablecap { padding: 11px 16px; border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 12px; color: var(--dim); display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 12.5px; min-width: 660px; }
+  th, td { text-align: left; padding: 10px 16px; border-bottom: 1px solid #101623; white-space: nowrap; }
+  th { color: var(--dim); font-weight: 400; background: #0a0e17; }
+  td { color: #cfd8e6; }
+  tr:last-child td { border-bottom: none; }
+  .tag { padding: 2px 8px; border-radius: 999px; font-size: 11px; border: 1px solid var(--line2); }
+  .tag.ok { color: var(--green); border-color: #17422e; background: #0b1a13; }
+  .tag.warn { color: #ffc14d; border-color: #4a3a12; background: #1a1509; }
+
+  .split { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
+  .panel { border: 1px solid var(--line); background: var(--panel); border-radius: 14px; padding: 24px; }
+  .panel h3 { margin: 0 0 10px; font-size: 17px; font-weight: 500; }
+  .panel p { margin: 0 0 14px; font-size: 14.5px; line-height: 1.6; color: var(--muted); }
+  .cite { display: block; font-family: var(--mono); font-size: 12px; line-height: 1.7; color: #cfd8e6; background: #0a0e17; border: 1px solid var(--line); border-radius: 9px; padding: 14px; word-break: break-word; white-space: normal; }
+  .links { display: flex; flex-wrap: wrap; gap: 10px; }
+  .links a { font-family: var(--mono); font-size: 12px; text-decoration: none; padding: 7px 12px; border: 1px solid var(--line2); border-radius: 8px; color: #cfd8e6; }
+  .links a:hover { border-color: #3c4a6b; }
+
+  .note { border: 1px solid #33290e; background: #14110a; border-radius: 12px; padding: 18px 20px; margin-top: 22px; }
+  .note strong { color: #ffc14d; font-weight: 500; }
+  .note p { margin: 8px 0 0; color: var(--muted); font-size: 14.5px; line-height: 1.6; }
+
+  footer { margin-top: 74px; border-top: 1px solid var(--line); }
+  .foot { display: flex; justify-content: space-between; gap: 14px; flex-wrap: wrap; padding: 26px 0 40px; font-family: var(--mono); font-size: 12px; color: var(--dim); }
+
+  @media (max-width: 640px) {
+    .wrap, .hero-inner { padding-left: 22px; padding-right: 22px; }
+    .wordmark h1 { font-size: clamp(30px, 10.5vw, 54px); }
+    .nav { flex-wrap: wrap; gap: 8px 16px; }
+    .tagline { font-size: 17px; }
+    .mark { gap: 18px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="hero">
+    <div class="hero-glow"></div>
+    <div class="hero-grid"></div>
+    <div class="hero-inner">
+
+      <div class="topbar">
+        <div class="repo">
+          <span class="dot"></span>
+          <span>martinandclaude<span style="color:var(--faint)">/</span><span style="color:var(--fg)">expansionscout</span></span>
+        </div>
+        <div class="nav">
+          <a href="#install">install</a>
+          <a href="#usage">usage</a>
+          <a href="#pipeline">how&nbsp;it&nbsp;works</a>
+          <a href="#limits">limits</a>
+          <a href="#cite">cite</a>
+        </div>
+      </div>
+
+      <div class="lockup">
+        <div class="mark">
+          <div class="mark-glow"></div>
+          <div class="bars">
+            <i style="height:38px;background:#ff4d4d"></i>
+            <i style="height:54px;background:#ff9d1f"></i>
+            <i style="height:70px;background:#ffe14d"></i>
+            <i style="height:92px;background:#37e58b"></i>
+            <i style="height:70px;background:#45c8ff"></i>
+            <i style="height:54px;background:#6b78ff"></i>
+            <i style="height:38px;background:#a855f7"></i>
+          </div>
+          <div class="wordmark">
+            <h1>expansionscout</h1>
+            <div class="sub">REPEAT EXPANSIONS + 5mC</div>
+          </div>
+        </div>
+
+        <p class="tagline">Targeted repeat-expansion calling from Oxford Nanopore BAM files, with per-allele methylation. It genotypes 82 disease loci and tells you, per sample, whether a normal result is actually trustworthy.</p>
+
+        <div class="badges">
+          <span class="badge"><span style="color:#2bd67b">●</span> v0.1.0</span>
+          <span class="badge"><span style="color:#22c3ff">●</span> MIT</span>
+          <span class="badge"><span style="color:#a855f7">●</span> one static binary</span>
+          <span class="badge"><span style="color:#ff9d1f">●</span> 82 loci</span>
+          <span class="badge"><span style="color:#ffe14d">●</span> research use only</span>
+        </div>
+
+        <div class="cta">
+          <a class="btn btn-primary" href="#install">Get started</a>
+          <a class="btn btn-ghost" href="https://github.com/martinandclaude/expansionscout">View on GitHub</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap body">
+
+    <div class="cards">
+      <div class="card">
+        <div class="ico" style="background:#141b2c;color:#45c8ff">◧</div>
+        <h3>Clipped reads still count</h3>
+        <p>A read the aligner soft-clipped at the repeat still bounds the allele from below. Reads are classified as spanning, split, partial or uninformative, and partial evidence is reported as a lower bound with its read support rather than discarded.</p>
+      </div>
+      <div class="card">
+        <div class="ico" style="background:#101f18;color:#2bd67b">◔</div>
+        <h3>Detectability, not false comfort</h3>
+        <p>Every expansion-regime locus reports the fraction of reads long enough to have spanned a pathogenic allele. Where that is low, the call is explicitly marked as not being negative evidence instead of looking like a clean result.</p>
+      </div>
+      <div class="card">
+        <div class="ico" style="background:#1b1526;color:#a855f7">◈</div>
+        <h3>Methylation and spread per allele</h3>
+        <p>5mC is summarised per allele over windows declared in gene orientation, so a promoter window lands on the correct flank either strand. Each allele also carries its spread, upward length tail and methylated-read fraction.</p>
+      </div>
+    </div>
+
+    <section id="install">
+      <div class="shead"><span>01</span><h2>Install</h2></div>
+      <p class="lede">One statically linked binary for x86-64 Linux. It needs nothing installed, and it carries the STRchive catalogue, the clinical overlay and the VCF dialects, so the file is the whole tool. Each release publishes the binary with its SHA-256, and the build is reproducible: a checkout of the release tag builds the same bytes.</p>
+      <div class="term">
+        <div class="term-bar">
+          <i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i>
+          <span class="lbl">bash</span>
+        </div>
+<pre><span class="c"># download the latest release, check it, put it on the PATH</span>
+<span class="p">$</span> gh release download <span class="f">--repo</span> martinandclaude/expansionscout
+<span class="p">$</span> sha256sum <span class="f">-c</span> expansionscout.sha256
+<span class="p">$</span> install <span class="f">-m</span> 755 expansionscout ~/.local/bin/
+<span class="p">$</span> expansionscout <span class="f">--version</span>
+
+<span class="c"># or build it: needs rustup and a C compiler</span>
+<span class="p">$</span> git clone https://github.com/martinandclaude/expansionscout
+<span class="p">$</span> cd expansionscout
+<span class="p">$</span> ./build-static.sh</pre>
+      </div>
+      <p class="lede" style="margin-top:16px">The binary and its checksum are also on the <a href="https://github.com/martinandclaude/expansionscout/releases">releases page</a>.</p>
+    </section>
+
+    <section id="usage">
+      <div class="shead"><span>02</span><h2>Quick start</h2></div>
+      <p class="lede">Point it at a coordinate-sorted, indexed BAM aligned to GRCh38 and the reference it was aligned to. Methylation output additionally needs MM/ML tags from modification-aware basecalling.</p>
+      <div class="term">
+        <div class="term-bar">
+          <i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i>
+          <span class="lbl">expansionscout call</span>
+          <span class="right">3–4 files out</span>
+        </div>
+<pre><span class="c"># the whole catalogue</span>
+<span class="p">$</span> expansionscout call <span class="f">--bam</span> sample.bam <span class="f">--ref</span> hg38.fa.gz <span class="f">--out</span> results/sample
+
+<span class="c"># selected loci, by id, alias or gene name</span>
+<span class="p">$</span> expansionscout call \
+    <span class="f">--bam</span>   sample.bam \
+    <span class="f">--ref</span>   hg38.fa.gz \
+    <span class="f">--out</span>   results/sample \
+    <span class="f">--loci</span>  FMR1 C9ORF72 HTT \
+    <span class="f">--sex</span>   XY \
+    <span class="f">--mosaic</span> \
+    <span class="f">--vcf</span>
+
+<span class="o">→ results/sample.loci.tsv      one row per locus
+→ results/sample.per_read.tsv  one row per read
+→ results/sample.report.html   the sample as a worklist, self-contained
+→ results/sample.vcf           one record per locus, with --vcf</span></pre>
+      </div>
+    </section>
+
+    <section id="pipeline">
+      <div class="shead"><span>03</span><h2>How it works</h2></div>
+      <div class="steps">
+        <div class="step">
+          <div class="n">STEP 1</div>
+          <div class="t">Read classification</div>
+          <div class="d">Each record is sorted from its CIGAR into spanning, left or right partial, split, or uninformative. Split records of one read are paired and sized from read coordinates.</div>
+        </div>
+        <div class="step">
+          <div class="n">STEP 2</div>
+          <div class="t">Per-read sizing</div>
+          <div class="d">A rotation-invariant walk decomposes the tract into units, labelling each canonical, pathogenic, benign, interruption or unrecognised. A single-base indel costs at most one unit.</div>
+        </div>
+        <div class="step">
+          <div class="n">STEP 3</div>
+          <div class="t">Allele assignment</div>
+          <div class="d">Haplotype tags where available, otherwise a Gaussian mixture chosen by BIC, which learns the read-to-read spread from the data rather than assuming it.</div>
+        </div>
+        <div class="step">
+          <div class="n">STEP 4</div>
+          <div class="t">Allele sequence</div>
+          <div class="d">Each allele's sequence, structure and repeat unit are a consensus of its reads, voted unit by unit in the allele's reading frame, so no single read's sequencing errors are written as the allele.</div>
+        </div>
+        <div class="step">
+          <div class="n">STEP 5</div>
+          <div class="t">Methylation</div>
+          <div class="d">Per read from MM/ML tags, summarised per allele over the tract and over gene-5′ and gene-3′ flank windows configured for that locus.</div>
+        </div>
+        <div class="step">
+          <div class="n">STEP 6</div>
+          <div class="t">Classification</div>
+          <div class="d">Clinical size bands where they exist, catalogue thresholds otherwise, plus the evidence state derived from partial reads.</div>
+        </div>
+      </div>
+
+      <div class="tablewrap">
+        <div class="tablecap">
+          <span>sample.loci.tsv <span style="color:var(--faint)">— selected columns</span></span>
+          <span style="color:var(--faint)">illustrative values</span>
+        </div>
+        <div class="scroll">
+          <table>
+            <thead>
+              <tr><th>locus</th><th>gene</th><th>a1</th><th>a2</th><th>class</th><th>5mC</th><th>detect</th><th>evidence</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>FXS_FMR1</td><td>FMR1</td><td>30</td><td>120</td><td>premutation</td><td>0.07</td><td>0.98</td><td><span class="tag ok">NONE</span></td></tr>
+              <tr><td>HD_HTT</td><td>HTT</td><td>17</td><td>21</td><td>normal</td><td>.</td><td>1.00</td><td><span class="tag ok">NONE</span></td></tr>
+              <tr><td>SCA1_ATXN1</td><td>ATXN1</td><td>29</td><td>30</td><td>normal</td><td>.</td><td>1.00</td><td><span class="tag ok">NONE</span></td></tr>
+              <tr><td>FTDALS1_C9orf72</td><td>C9orf72</td><td>2</td><td>8</td><td>normal</td><td>0.44</td><td>0.11</td><td><span class="tag warn">EXPANSION_LB</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <p class="lede" style="margin-top:16px">The last row is the case the tool exists for. Both alleles look normal, but only 11&nbsp;% of reads were long enough to have spanned a pathogenic allele, and clipped reads support something much longer. That result is flagged rather than reported as a negative.</p>
+    </section>
+
+    <section id="limits">
+      <div class="shead"><span>04</span><h2>Limits</h2></div>
+      <div class="split">
+        <div class="panel">
+          <h3>What it cannot do</h3>
+          <p>Alleles longer than the reads cannot be measured; no method working on aligned sequence can size a tract no read crosses. Mosaicism is described through spread and minor modes, never quantified as a fraction. Methylation is only as good as the basecalling that produced the tags.</p>
+          <p style="margin:0">Interpretation is locus-specific: composition loci such as RFC1 turn on which motif is expanded rather than length, and at ATXN1 a long interrupted allele can be benign while a shorter pure one is not.</p>
+        </div>
+        <div class="panel">
+          <h3>Validation status</h3>
+          <p>The test suite is synthetic. Alignments are built in process with explicit CIGAR strings, so no sequencing data is needed and none is distributed.</p>
+          <p style="margin:0">Concordance against orthogonal measurement — PCR fragment analysis, repeat-primed PCR, Southern blot — has <strong style="color:#ffc14d;font-weight:500">not</strong> been established. Treat the output accordingly.</p>
+        </div>
+      </div>
+      <div class="note">
+        <strong>Research use only.</strong>
+        <p>This is not a clinical assay and no output is a diagnostic claim. Confirm every size-class boundary against your own laboratory's validated cut-points before relying on a label.</p>
+      </div>
+    </section>
+
+    <section id="cite">
+      <div class="shead"><span>05</span><h2>Citing</h2></div>
+      <div class="split">
+        <div class="panel">
+          <h3>Cite the locus catalogue</h3>
+          <p>expansionscout bundles the STRchive disease-locus catalogue, redistributed under CC&nbsp;BY&nbsp;4.0. That licence requires attribution, so cite STRchive if you use this tool, and the repository and the release you used.</p>
+          <code class="cite">Hiatt L, Weisburd B, Dolzhenko E, Rubinetti V, Avvaru AK, VanNoy GE, Kurtas NE, Rehm HL, Quinlan AR, Dashnow H. STRchive: a dynamic resource detailing population-level and locus-specific insights at tandem repeat disease loci. <em>Genome Medicine</em> 2025;17(1):29. doi:10.1186/s13073-025-01454-4</code>
+        </div>
+        <div class="panel">
+          <h3>Contributing</h3>
+          <p>Issues and pull requests are welcome, particularly locus overlay entries, validation against known-size samples, and anything that improves the honesty of the detectability estimate.</p>
+          <div class="links">
+            <a href="https://github.com/martinandclaude/expansionscout">Repository</a>
+            <a href="https://github.com/martinandclaude/expansionscout/releases">Releases</a>
+            <a href="https://github.com/martinandclaude/expansionscout/issues">Issues</a>
+            <a href="https://github.com/martinandclaude/expansionscout/blob/main/NOTICE.md">NOTICE.md</a>
+            <a href="https://github.com/martinandclaude/expansionscout/blob/main/LICENSE">LICENSE</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <div class="foot">
+        <span>MIT © 2026 · martinandclaude/expansionscout</span>
+        <span>Repeat-expansion calling with methylation, from ONT reads</span>
+      </div>
+    </footer>
+  </div>
+</div>
+</body>
+</html>
