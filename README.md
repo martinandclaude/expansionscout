@@ -3,6 +3,8 @@
 Targeted repeat-expansion calling from Oxford Nanopore (ONT) BAM files,
 with per-allele methylation.
 
+**[martinandclaude.github.io/expansionscout](https://martinandclaude.github.io/expansionscout/)**
+
 ExpansionScout genotypes the disease-associated tandem repeat loci catalogued in
 [STRchive](https://github.com/dashnowlab/STRchive). For each locus it sizes
 every read by walking its repeat motifs, assigns reads to alleles, summarises
