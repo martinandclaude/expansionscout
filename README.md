@@ -195,34 +195,6 @@ alongside its VCF, which this tool does not produce, so the VCF alone drives
 nothing; and its `AD_SP` / `AD_FL` / `AD_IR` are per-allele read counts split
 by read class, where this tool holds read class per locus.
 
-### Checking a run against itself
-
-```bash
-expansionscout qc results/sample.loci.tsv
-```
-
-Six checks whose expected answer is known before the data arrives, so they
-work on a clinical sample with no truth set. Each finding carries its basis,
-because they are not equally well founded:
-
-| Basis | Meaning |
-|---|---|
-| `mechanical` | a binary fact about the file — no threshold, no judgement |
-| `biology` | follows from the sample's own karyotype or a cited standard |
-| `consistency` | two of our own numbers that cannot both be right |
-| `heuristic` | an unvalidated cut-point of ours, flagged so it is not quoted as a standard |
-
-`skip` is not `pass`: a run with no modification tags has not passed the
-methylation checks, and the report says so.
-
-The methylation control is the clearest example. *FMR1* promoter methylation
-should follow the sample's X complement — unmethylated on a single active X
-with a normal-length allele, and split between one silenced and one active
-allele on two X chromosomes. On the seven GIAB samples it passes in all seven
-when phased; run without haplotags it warns in exactly the three samples with
-two X chromosomes, because both alleles then report one pooled average that
-describes neither. No truth set is involved in either direction.
-
 ## What is distinctive
 
 A BAM-based caller can only measure an allele it can see. ExpansionScout is built
@@ -319,24 +291,10 @@ rather than by path: the report's provenance and the VCF header carry
 `STRchive v2.26.1 (bundled), sha256:...` for the vendored release, wherever
 the file was read from, and the path and SHA-256 of anything else.
 
-One thing to know before editing motifs: above 12 bp, a unit is also matched
-by identity to the run's reading frame -- its first exact unit, or where a
-read holds none, the first catalogue rotation that fits -- and takes that
-frame's class. So if a long motif is given more than one class of the same
-length -- canonical and benign, say -- the classes are told apart only in
-exact copies, and a noisy unit is counted with the frame's. The bundled
-release has one class per long motif.
-
 A small overlay, [`data/overlay.yaml`](data/overlay.yaml), adds only what the
 catalogue does not carry: methylation windows and their clinical meaning,
 which interruptions to score, aliases, and clinical size-band labels. It is
 compiled in as well.
-
-Adding a locus usually means adding nothing, because it is already in the
-catalogue; one that is not can be added to a catalogue file given with
-`--catalog`. An overlay entry is needed only to give a locus a methylation
-window, interruption motifs, or finer size bands, and since the overlay is
-compiled in, that means rebuilding.
 
 ### The interval belongs to one assembly
 
@@ -442,39 +400,7 @@ Read this before trusting any output.
   and are not themselves a validated standard.
 
 This is a research tool. It is not a clinical assay, and no output is a
-diagnostic claim.
-
-## Reproducibility
-
-A result depends on the binary and the inputs, and nothing else. The binary
-has no runtime dependencies and carries the catalogue release, the clinical
-overlay and the VCF dialects it was built with, and `--version` names the
-catalogue. The build is reproducible: the same commit, `Cargo.lock` and
-pinned toolchain, linker included, give the same SHA-256 in any checkout.
-CI builds every commit twice, in two checkouts, and fails unless the two
-match; a release is built a third time and must match again. So a result
-can be tied to one file, and that file checked by rebuilding it. See Heng
-Li, [The AI rewrite dilemma](https://lh3.github.io/2026/04/17/the-ai-rewrite-dilemma),
-for why this matters.
-
-`SOURCE_DATE_EPOCH`, when set, fixes the date printed on the report, so a
-report can be reproduced byte for byte too.
-
-The binary is a port of a Python reference implementation, which is where
-the method is developed
-([`martinandclaude/expansionscout-dev`](https://github.com/martinandclaude/expansionscout-dev)).
-The two are required to agree byte for byte on every output: every table,
-the VCF in each dialect, the report, `qc`, and the messages on standard
-error. The reference's parity tests check this against the commit of this
-repository it pins, on synthetic samples that vary read classes, strands,
-clipping, phasing, sequencing noise, modification tags including malformed
-ones, gzipped and plain references, BAI and CSI indexes, contig naming,
-thread counts and catalogues, and on thousands of random cases built to
-reach the edge cases of allele assignment and of the allele-sequence
-consensus. Matching byte for byte meant pinning arithmetic that is easy to
-leave implicit: the mixture model's `exp` and `log` come from the pure-Rust
-`libm`, which gives the same bits on every CPU, where numpy's depend on
-whether the processor has AVX-512.
+diagnostic claim. 
 
 ## Status
 
