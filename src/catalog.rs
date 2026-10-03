@@ -74,6 +74,17 @@ pub struct Band {
     pub label: String,
 }
 
+/// A catalogue motif a locus does not match, and why.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UnusedMotif {
+    pub class: String,
+    pub motif: String,
+    pub reason: String,
+}
+
+/// Motif classes whose unmatched members can change a call.
+pub const RESULT_CLASSES: [&str; 3] = ["reference", "pathogenic", "benign"];
+
 #[derive(Clone, Debug)]
 pub struct Locus {
     pub id: String,
@@ -107,6 +118,9 @@ pub struct Locus {
     pub caveats: Vec<String>,
     pub interruptions_in_size: bool,
     pub bands: Vec<Band>,
+    /// Catalogue motifs this locus does not match, in catalogue order: the
+    /// matcher takes one unit length per locus.
+    pub unused_motifs: Vec<UnusedMotif>,
     motifset: MotifSet,
 }
 
@@ -137,6 +151,31 @@ impl Locus {
 
     pub fn composition(&self) -> bool {
         self.motifset.composition
+    }
+
+    /// Unused reference, pathogenic and benign motifs: the ones whose absence
+    /// can change a call.
+    pub fn dropped_motifs(&self) -> impl Iterator<Item = &UnusedMotif> {
+        self.unused_motifs
+            .iter()
+            .filter(|u| RESULT_CLASSES.contains(&u.class.as_str()))
+    }
+
+    /// Lengths of unmatched reference, pathogenic, benign and unknown motifs
+    /// a tract could repeat at instead of the unit length, ascending; a
+    /// multiple or divisor of the unit length cannot be told apart from it.
+    pub fn other_periods(&self) -> Vec<usize> {
+        let l = self.unit_len;
+        let mut out: Vec<usize> = self
+            .unused_motifs
+            .iter()
+            .filter(|u| u.class != "interruption")
+            .map(|u| u.motif.chars().count())
+            .filter(|&p| !p.is_multiple_of(l) && !l.is_multiple_of(p))
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        out
     }
 
     /// Gene-5' flank window as reference [a, b), or None.
@@ -335,6 +374,30 @@ fn same_len(motifs: Option<&Json>, unit_len: usize) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn off_len(motif: &str, unit_len: usize) -> String {
+    format!("{} bp against a unit length of {unit_len}", motif.chars().count())
+}
+
+fn motif_list(rec: &Json, key: &str) -> Vec<String> {
+    rec.get_some(key)
+        .map(|m| {
+            m.as_list()
+                .iter()
+                .filter_map(|x| x.as_str())
+                .map(|s| s.to_ascii_uppercase())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// One note per dropped motif, for a locus's result.
+pub fn catalogue_notes(locus: &Locus) -> Vec<String> {
+    locus
+        .dropped_motifs()
+        .map(|u| format!("catalogue {} motif {} not matched: {}", u.class, u.motif, u.reason))
+        .collect()
+}
+
 fn regime(pathogenic_max: Option<Num>, unit_len: usize) -> &'static str {
     match pathogenic_max {
         None => "expansion",
@@ -389,15 +452,57 @@ pub fn build_locus(rec: &Json, ov: Option<&OverlayEntry>, build: &str) -> Result
         .to_string();
     let unit_len = rec.get("motif_len").and_then(int_field).ok_or("motif_len missing")? as usize;
     let mut ref_motifs = same_len(rec.get_some("reference_motif_reference_orientation"), unit_len);
-    if ref_motifs.is_empty() {
+    let fallback = ref_motifs.is_empty();
+    if fallback {
         ref_motifs = same_len(rec.get_some("pathogenic_motif_reference_orientation"), unit_len);
     }
     if ref_motifs.is_empty() {
         return Ok(None);
     }
+    let unused_of = |class: &str, motif: &str, reason: String| UnusedMotif {
+        class: class.to_string(),
+        motif: motif.to_string(),
+        reason,
+    };
+    let mut unused = Vec::new();
+    for class in RESULT_CLASSES {
+        for m in motif_list(rec, &format!("{class}_motif_reference_orientation")) {
+            if m.chars().count() != unit_len {
+                let mut why = off_len(&m, unit_len);
+                if class == "reference" && fallback {
+                    why.push_str("; the pathogenic motif is matched in its place");
+                }
+                unused.push(unused_of(class, &m, why));
+            }
+        }
+    }
+    for m in motif_list(rec, "unknown_motif_reference_orientation") {
+        let why = if m.chars().count() != unit_len {
+            off_len(&m, unit_len)
+        } else {
+            "unknown significance, not matched".to_string()
+        };
+        unused.push(unused_of("unknown", &m, why));
+    }
+    let strchive_int = motif_list(rec, "interruption_reference_orientation");
     let interruptions = match ov {
-        Some(o) => to_ref(&o.interruptions_gene, &strand),
-        None => same_len(rec.get_some("interruption_reference_orientation"), unit_len),
+        Some(o) => {
+            let ints = to_ref(&o.interruptions_gene, &strand);
+            for m in strchive_int.iter().filter(|m| !ints.contains(m)) {
+                unused.push(unused_of(
+                    "interruption",
+                    m,
+                    "the overlay's interruptions are used instead".into(),
+                ));
+            }
+            ints
+        }
+        None => {
+            for m in strchive_int.iter().filter(|m| m.chars().count() != unit_len) {
+                unused.push(unused_of("interruption", m, off_len(m, unit_len)));
+            }
+            same_len(rec.get_some("interruption_reference_orientation"), unit_len)
+        }
     };
     let (meth_relevant, meth_up_bp, meth_down_bp, meth_note) = match ov {
         Some(o) => (o.meth_relevant, o.meth_up_bp, o.meth_down_bp, o.meth_note.clone()),
@@ -481,6 +586,7 @@ pub fn build_locus(rec: &Json, ov: Option<&OverlayEntry>, build: &str) -> Result
         caveats: ov.map(|o| o.caveats.clone()).unwrap_or_default(),
         interruptions_in_size: ov.and_then(|o| o.interruptions_in_size).unwrap_or(true),
         bands: ov.map(|o| o.bands.clone()).unwrap_or_default(),
+        unused_motifs: unused,
         motifset,
     }))
 }

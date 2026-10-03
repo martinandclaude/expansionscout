@@ -5,14 +5,15 @@ use std::path::Path;
 
 use crate::alleles::{cluster_counts, spread_stats};
 use crate::bam::{Bam, Fasta};
-use crate::catalog::Locus;
+use crate::catalog::{catalogue_notes, Locus};
 use crate::classify::{
     class_units, classify_units, detectability, evidence_state, lower_bound, negative_reliable, over_dispersed,
-    size_units, SizeVal, EVIDENCE_NONE, NO_CALL,
+    size_units, SizeVal, EVIDENCE_NONE, NO_CALL, UNCERTAIN,
 };
 use crate::consensus::{allele_consensus, shortfall, ConsensusRead};
 use crate::decompose::{
-    Decomposition, MotifSet, LABEL_BENIGN, LABEL_CANONICAL, LABEL_INTERRUPTION, LABEL_OTHER, LABEL_PATHOGENIC,
+    competing_period, Decomposition, MotifSet, LABEL_BENIGN, LABEL_CANONICAL, LABEL_INTERRUPTION, LABEL_OTHER,
+    LABEL_PATHOGENIC,
 };
 use crate::methylation::{read_methylation, ReadMeth, WindowMeth};
 use crate::npstat::{mean, median, py_round};
@@ -222,6 +223,9 @@ pub struct Hap {
     pub n_pathogenic: Option<i64>,
     pub cls: String,
     pub dispersed: bool,
+    /// A catalogue period the allele's reads repeat at instead of the unit
+    /// length; its pathogenic-motif count is then withheld.
+    pub other_period: Option<usize>,
     pub structure: Option<String>,
     pub seq: Option<String>,
     pub motif: Option<String>,
@@ -326,7 +330,7 @@ fn empty_result<'a>(locus: &'a Locus, sample: &str, opts: &Options, note: String
         ploidy: locus.ploidy(&opts.sex),
         meth_convention: opts.meth_convention.clone(),
         tagged_fraction: None,
-        notes: vec![note],
+        notes: std::iter::once(note).chain(catalogue_notes(locus)).collect(),
         diagnostics: vec![],
     }
 }
@@ -583,11 +587,27 @@ fn summarise(members: &[&Call], locus: &Locus, clinical: bool) -> Hap {
     } else {
         Some(int_median(&counts(LABEL_INTERRUPTION)))
     };
-    let n_path = if exact.is_empty() {
+    let mut n_path = if exact.is_empty() {
         None
     } else {
         Some(int_median(&counts(LABEL_PATHOGENIC)))
     };
+    // An allele most of whose reads repeat at another catalogue period was
+    // decomposed in the wrong unit: its pathogenic-motif count is withheld
+    // and it is left unclassified.
+    let mut other_period = None;
+    let periods = locus.other_periods();
+    if !exact.is_empty() && locus.composition() && !periods.is_empty() {
+        let hits: Vec<usize> = exact
+            .iter()
+            .filter_map(|m| competing_period(m.seq.as_deref().unwrap_or("").as_bytes(), locus.unit_len, &periods))
+            .collect();
+        if 2 * hits.len() >= exact.len() {
+            let count = |p: usize| hits.iter().filter(|&&h| h == p).count();
+            other_period = hits.iter().copied().max_by_key(|&p| (count(p), std::cmp::Reverse(p)));
+            n_path = None;
+        }
+    }
     let n_ben = if exact.is_empty() {
         0
     } else {
@@ -640,6 +660,8 @@ fn summarise(members: &[&Call], locus: &Locus, clinical: bool) -> Hap {
     let dispersed = over_dispersed(Some(med), Some(st.p95), Some(st.tail_up_frac), members.len());
     let cls = if dispersed {
         NO_CALL.to_string()
+    } else if other_period.is_some() {
+        UNCERTAIN.to_string()
     } else {
         classify_units(locus, Some(cls_units))
     };
@@ -664,6 +686,7 @@ fn summarise(members: &[&Call], locus: &Locus, clinical: bool) -> Hap {
         n_pathogenic: n_path,
         cls,
         dispersed,
+        other_period,
         structure,
         seq,
         motif,
@@ -993,6 +1016,31 @@ pub fn call_locus<'a>(
             notes.push(note);
         }
     }
+    let mut periods: Vec<usize> = haps.iter().filter_map(|h| h.other_period).collect();
+    periods.sort_unstable();
+    periods.dedup();
+    for p in periods {
+        let which: Vec<String> = haps
+            .iter()
+            .enumerate()
+            .filter(|(_, h)| h.other_period == Some(p))
+            .map(|(i, _)| (i + 1).to_string())
+            .collect();
+        let named: Vec<String> = locus
+            .unused_motifs
+            .iter()
+            .filter(|u| u.motif.chars().count() == p && u.class != "interruption")
+            .map(|u| format!("{} ({})", u.motif, u.class))
+            .collect();
+        notes.push(format!(
+            "{} {}: the tract repeats every {p} bp rather than every {}, as the catalogue's unmatched {} would; \
+             its pathogenic-motif count is withheld and it is not classified",
+            if which.len() > 1 { "alleles" } else { "allele" },
+            which.join(" and "),
+            locus.unit_len,
+            named.join(", ")
+        ));
+    }
 
     let n_partial = lr
         .obs
@@ -1023,6 +1071,7 @@ pub fn call_locus<'a>(
             notes.push(format!("contig {} not in the reference FASTA", locus.chrom));
         }
     }
+    notes.extend(catalogue_notes(locus));
 
     Ok(LocusResult {
         locus,
