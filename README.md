@@ -389,6 +389,14 @@ Read this before trusting any output.
 - **Interpretation is locus-specific.** Composition loci such as RFC1 turn on
   which motif is expanded, not on length; at ATXN1 a long interrupted allele
   can be benign while a shorter pure one is not. Treat these as screens.
+- **One unit length per locus.** Reads are matched against the catalogue
+  motifs of the locus's unit length only, so a motif of another length, such
+  as RFC1's benign AAAGGG or GOLGA8A's reference TTTC, is not looked for.
+  `call` warns about these, each affected locus says so in its notes, and
+  `expansionscout loci` lists every catalogue motif that is not matched. At a
+  composition locus, an allele whose reads repeat at one of those other
+  lengths has its pathogenic-motif count withheld and is reported
+  `uncertain`, rather than counted in the wrong unit.
 - **ADTKD-MUC1 is out of reach.** Its disease allele is one extra C in one
   unit of a VNTR kilobases long, which a length measurement cannot see; a
   result at that locus is the VNTR's length, not a finding for the disease.

@@ -56,6 +56,40 @@ fn rotations(m: &[u8]) -> Vec<Vec<u8>> {
     out
 }
 
+/// How much worse than the unit length another period may fit and still
+/// count as fitting as well, as 1/PERIOD_SLACK of identity.
+pub const PERIOD_SLACK: u64 = 20;
+/// Copies of the longer of the two periods a tract needs before either is
+/// judged.
+pub const PERIOD_MIN_COPIES: usize = 6;
+
+/// (matches, comparisons): positions whose base equals the one `p` further on.
+fn lag_matches(seq: &[u8], p: usize) -> (u64, u64) {
+    let n = seq.len().saturating_sub(p);
+    ((0..n).filter(|&i| seq[i] == seq[i + p]).count() as u64, n as u64)
+}
+
+/// The first of `periods` (ascending) that `seq` repeats at about as well as
+/// it does at `unit_len`, or None. A guard for composition loci whose
+/// catalogue has motifs of another length, which the matcher cannot see:
+/// every 5-mer of an AAAGGG tract is a rotation of AAAGG or AAGGG. Compared
+/// in integers: `p` qualifies when m_p/n_p >= m_L/n_L - 1/PERIOD_SLACK.
+pub fn competing_period(seq: &[u8], unit_len: usize, periods: &[usize]) -> Option<usize> {
+    let seq = seq.to_ascii_uppercase();
+    let mut base: Option<(u64, u64)> = None;
+    for &p in periods {
+        if seq.len() < PERIOD_MIN_COPIES * unit_len.max(p) {
+            continue;
+        }
+        let (ml, nl) = *base.get_or_insert_with(|| lag_matches(&seq, unit_len));
+        let (mp, np) = lag_matches(&seq, p);
+        if PERIOD_SLACK * mp * nl + nl * np >= PERIOD_SLACK * ml * np {
+            return Some(p);
+        }
+    }
+    None
+}
+
 /// `(edits, length)` of the best alignment of all of `unit` against a prefix
 /// of `text`, or None if every one needs more than `max_edits` edits. Of
 /// equally good lengths the one nearest `unit.len()` is taken, then the
@@ -951,6 +985,23 @@ mod tests {
 
     fn c(n: usize) -> String {
         "C".repeat(n)
+    }
+
+    #[test]
+    fn competing_period_finds_a_hexamer_tract_at_a_pentamer_locus() {
+        for tract in [
+            "AAAGGG".repeat(200),
+            "AAAGG".repeat(25) + &"AAAGGG".repeat(86),
+            "AAAGGAAAGGG".repeat(100),
+        ] {
+            assert_eq!(competing_period(tract.as_bytes(), 5, &[6]), Some(6));
+        }
+        for tract in ["AAAGG".repeat(200), "AAAAG".repeat(100) + &"AAGGG".repeat(100)] {
+            assert_eq!(competing_period(tract.as_bytes(), 5, &[6]), None);
+        }
+        // six copies of the longer period are needed to judge
+        assert_eq!(competing_period("AAAGGG".repeat(5).as_bytes(), 5, &[6]), None);
+        assert_eq!(competing_period("AAAGGG".repeat(6).as_bytes(), 5, &[6]), Some(6));
     }
 
     #[test]

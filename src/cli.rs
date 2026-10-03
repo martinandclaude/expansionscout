@@ -231,6 +231,34 @@ pub fn main() -> i32 {
     }
 }
 
+fn short_motif(m: &str) -> String {
+    let n = m.chars().count();
+    if n <= 12 {
+        m.to_string()
+    } else {
+        format!("{}...({n} bp)", m.chars().take(9).collect::<String>())
+    }
+}
+
+/// Warn once about catalogue motifs the selected loci cannot match; each
+/// affected locus also says so in its notes.
+fn warn_unmatched_motifs(loci: &[&crate::catalog::Locus]) {
+    let hits: Vec<String> = loci
+        .iter()
+        .flat_map(|loc| {
+            loc.dropped_motifs()
+                .map(move |u| format!("{} {} {}", loc.id, u.class, short_motif(&u.motif)))
+        })
+        .collect();
+    if !hits.is_empty() {
+        eprintln!(
+            "WARNING: catalogue motifs not matched because their length differs from the locus unit length \
+             (see the notes of each locus): {}",
+            hits.join("; ")
+        );
+    }
+}
+
 fn check_reference_matches_build(reference: &Path, loci: &[&crate::catalog::Locus], build: &str) {
     let Ok(mut fa) = Fasta::open(reference) else { return };
     let mut covers = Vec::new();
@@ -273,6 +301,7 @@ fn cmd_call(a: CallArgs) -> Result<i32, String> {
     if loci.is_empty() {
         return Ok(eprint_exit("no loci selected"));
     }
+    warn_unmatched_motifs(&loci);
     check_reference_matches_build(&a.reference, &loci, &a.build);
     let bam = Bam::open(&a.bam).map_err(|e| format!("{}: {e}", a.bam.display()))?;
     let sample = match a.sample.clone().filter(|s| !s.is_empty()) {
@@ -485,6 +514,18 @@ fn cmd_loci(a: LociArgs) -> Result<i32, String> {
             loc.aliases.join(","),
         ];
         let _ = writeln!(out, "{}", row.join("\t"));
+    }
+    let unused: Vec<(&str, &crate::catalog::UnusedMotif)> = cat
+        .loci
+        .iter()
+        .filter(|loc| a.regime.as_ref().is_none_or(|r| *r == loc.regime))
+        .flat_map(|loc| loc.unused_motifs.iter().map(move |u| (loc.id.as_str(), u)))
+        .collect();
+    if !unused.is_empty() {
+        eprintln!("catalogue motifs not matched (reference strand):");
+        for (id, u) in unused {
+            eprintln!("  {id} {} {}: {}", u.class, short_motif(&u.motif), u.reason);
+        }
     }
     if !cat.dropped.is_empty() {
         eprintln!(
