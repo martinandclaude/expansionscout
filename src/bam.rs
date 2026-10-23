@@ -1,24 +1,27 @@
 //! Alignment and reference access, reproducing pysam's view of a record.
 //!
 //! noodles does the container work: BGZF, the BAM record framing, BAI/CSI
-//! chunk lookup, FASTA indexes. Everything the caller can observe about a
-//! record is decoded here from the raw fields, following htslib 1.24 and
-//! pysam 0.24.1 (the versions the Python implementation runs on), because
-//! small differences -- which records a region query returns, how a CIGAR
-//! with a padding op advances the query, what a reverse read's MM tag points
-//! at -- change the output.
+//! chunk lookup, CRAM decoding, FASTA indexes. Everything the caller can
+//! observe about a record is decoded here from the raw fields, following
+//! htslib 1.24 and pysam 0.24.1 (the versions the Python implementation runs
+//! on), because small differences -- which records a region query returns,
+//! how a CIGAR with a padding op advances the query, what a reverse read's MM
+//! tag points at -- change the output.
 
 use std::fs::File;
-use std::io;
+use std::io::{self, Read, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use noodles_bam as bam;
 use noodles_bgzf as bgzf;
 use noodles_core::region::Interval;
 use noodles_core::Position;
+use noodles_cram as cram;
 use noodles_csi::BinningIndex;
 use noodles_fasta as fasta;
 use noodles_sam as sam;
+
+use crate::pyfmt::thousands;
 
 pub const CMATCH: u8 = 0;
 pub const CINS: u8 = 1;
@@ -428,10 +431,25 @@ fn find_cg(a: &[u8]) -> Option<(usize, usize)> {
     None
 }
 
-/// Open alignments: a coordinate-sorted BAM with its index.
-pub struct Bam {
-    reader: bam::io::Reader<bgzf::io::Reader<File>>,
-    index: Box<dyn BinningIndex>,
+enum Reader {
+    Bam {
+        reader: bam::io::Reader<bgzf::io::Reader<File>>,
+        index: Box<dyn BinningIndex>,
+    },
+    Cram {
+        reader: cram::io::Reader<File>,
+        index: cram::crai::Index,
+        repository: fasta::Repository,
+        /// The contig whose sequence the repository holds.
+        cached: Option<usize>,
+        reference: PathBuf,
+    },
+}
+
+/// Open alignments: a coordinate-sorted BAM or CRAM with its index.
+pub struct Alignments {
+    reader: Reader,
+    pub path: PathBuf,
     pub header: sam::Header,
     pub references: Vec<String>,
     pub lengths: Vec<i64>,
@@ -443,33 +461,129 @@ fn with_ext(p: &Path, ext: &str) -> PathBuf {
     PathBuf::from(s)
 }
 
-fn read_index(path: &Path) -> io::Result<Box<dyn BinningIndex>> {
-    let candidates = [
-        with_ext(path, ".bai"),
-        path.with_extension("bai"),
-        with_ext(path, ".csi"),
-        path.with_extension("csi"),
-    ];
-    for c in &candidates {
-        if c.exists() {
-            return if c.extension().is_some_and(|e| e == "csi") {
-                Ok(Box::new(noodles_csi::fs::read(c)?))
-            } else {
-                Ok(Box::new(bam::bai::fs::read(c)?))
-            };
-        }
-    }
-    Err(io::Error::new(
-        io::ErrorKind::NotFound,
-        format!("no index for {} (looked for .bai and .csi)", path.display()),
-    ))
+fn find_index(path: &Path, exts: &[&str]) -> io::Result<PathBuf> {
+    exts.iter()
+        .flat_map(|e| [with_ext(path, &format!(".{e}")), path.with_extension(e)])
+        .find(|c| c.exists())
+        .ok_or_else(|| {
+            let looked = exts.iter().map(|e| format!(".{e}")).collect::<Vec<_>>().join(" and ");
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("no index for {} (looked for {looked})", path.display()),
+            )
+        })
 }
 
-impl Bam {
-    pub fn open(path: &Path) -> io::Result<Bam> {
-        let index = read_index(path)?;
-        let mut reader = File::open(path).map(bam::io::Reader::new)?;
-        let header = reader.read_header()?;
+fn read_index(path: &Path) -> io::Result<Box<dyn BinningIndex>> {
+    let c = find_index(path, &["bai", "csi"])?;
+    if c.extension().is_some_and(|e| e == "csi") {
+        Ok(Box::new(noodles_csi::fs::read(c)?))
+    } else {
+        Ok(Box::new(bam::bai::fs::read(c)?))
+    }
+}
+
+pub fn cram_missing_contig(path: &Path, contig: &str, reference: &Path) -> String {
+    format!(
+        "{} is a CRAM and contig {contig} is not in {}; a CRAM can only be read with the reference it was written against",
+        path.display(),
+        reference.display()
+    )
+}
+
+pub fn cram_length_mismatch(path: &Path, contig: &str, cram_len: i64, reference: &Path, fa_len: i64) -> String {
+    format!(
+        "{} is a CRAM written against a {contig} of {} bp, but {} has {} bp; pass the reference the CRAM was written against",
+        path.display(),
+        thousands(cram_len),
+        reference.display(),
+        thousands(fa_len)
+    )
+}
+
+/// Reference sequence for CRAM decoding: from the --ref FASTA only, never
+/// looked up elsewhere by checksum, and only for a contig of the length the
+/// CRAM header gives it.
+struct CramReference {
+    reader: fasta::io::IndexedReader<fasta::io::BufReader<File>>,
+    lengths: Vec<(Vec<u8>, i64)>,
+    path: PathBuf,
+    reference: PathBuf,
+}
+
+impl fasta::repository::Adapter for CramReference {
+    fn get(&mut self, name: &[u8]) -> Option<io::Result<fasta::Record>> {
+        let contig = String::from_utf8_lossy(name).into_owned();
+        let bad = |msg: String| io::Error::new(io::ErrorKind::InvalidData, msg);
+        let Some(&(_, cram_len)) = self.lengths.iter().find(|(n, _)| n == name) else {
+            return Some(Err(bad(format!(
+                "contig {contig} is not in the header of {}",
+                self.path.display()
+            ))));
+        };
+        let present = self.reader.index().as_ref().iter().any(|r| r.name() == name);
+        if !present {
+            return Some(Err(bad(cram_missing_contig(&self.path, &contig, &self.reference))));
+        }
+        let rec = match self.reader.query(&noodles_core::Region::new(name, ..)) {
+            Ok(rec) => rec,
+            Err(e) => return Some(Err(e)),
+        };
+        let fa_len = rec.sequence().len() as i64;
+        if fa_len != cram_len {
+            return Some(Err(bad(cram_length_mismatch(
+                &self.path,
+                &contig,
+                cram_len,
+                &self.reference,
+                fa_len,
+            ))));
+        }
+        Some(Ok(rec))
+    }
+}
+
+impl Alignments {
+    /// A BAM or a CRAM, told apart by the file's magic number. A CRAM is
+    /// decoded against `reference`; a BAM ignores it.
+    pub fn open(path: &Path, reference: &Path) -> io::Result<Alignments> {
+        let mut magic = [0u8; 4];
+        let is_cram = File::open(path)?.read_exact(&mut magic).is_ok() && &magic == b"CRAM";
+        let (reader, header) = if is_cram {
+            let index = cram::crai::fs::read(find_index(path, &["crai"])?)?;
+            let fa = fasta::io::indexed_reader::Builder::default()
+                .build_from_path(reference)
+                .map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", reference.display())))?;
+            let mut probe = File::open(path).map(cram::io::Reader::new)?;
+            let header = probe.read_header()?;
+            let lengths = header
+                .reference_sequences()
+                .iter()
+                .map(|(name, map)| (name.to_vec(), usize::from(map.length()) as i64))
+                .collect();
+            let repository = fasta::Repository::new(CramReference {
+                reader: fa,
+                lengths,
+                path: path.to_path_buf(),
+                reference: reference.to_path_buf(),
+            });
+            let reader = cram::io::reader::Builder::default()
+                .set_reference_sequence_repository(repository.clone())
+                .build_from_path(path)?;
+            let reader = Reader::Cram {
+                reader,
+                index,
+                repository,
+                cached: None,
+                reference: reference.to_path_buf(),
+            };
+            (reader, header)
+        } else {
+            let index = read_index(path)?;
+            let mut reader = File::open(path).map(bam::io::Reader::new)?;
+            let header = reader.read_header()?;
+            (Reader::Bam { reader, index }, header)
+        };
         let (references, lengths) = header
             .reference_sequences()
             .iter()
@@ -480,13 +594,17 @@ impl Bam {
                 )
             })
             .unzip();
-        Ok(Bam {
+        Ok(Alignments {
             reader,
-            index,
+            path: path.to_path_buf(),
             header,
             references,
             lengths,
         })
+    }
+
+    pub fn is_cram(&self) -> bool {
+        matches!(self.reader, Reader::Cram { .. })
     }
 
     /// The first read group's SM, as `_sample_from_bam` looks for it.
@@ -512,33 +630,128 @@ impl Bam {
         if start >= end {
             return Ok(vec![]);
         }
-        // Chunks for a slightly wider interval, then htslib's own test.
-        let lo = Position::new((start.max(0) + 1) as usize).unwrap();
-        let hi = Position::new((end + 1) as usize).unwrap();
-        let interval: Interval = (lo..=hi).into();
-        let chunks = self.index.query(tid, interval)?;
-        let query = noodles_csi::io::Query::new(self.reader.get_mut(), chunks);
-        let mut r = bam::io::Reader::from(query);
-        let mut rec = bam::Record::default();
-        let mut out = Vec::new();
-        while r.read_record(&mut rec)? != 0 {
-            let rtid = rec.reference_sequence_id().transpose()?;
-            if rtid != Some(tid) {
-                if rtid.is_none() || rtid.unwrap() > tid {
-                    break;
+        match &mut self.reader {
+            Reader::Bam { reader, index } => fetch_bam(reader, index.as_ref(), tid, start, end),
+            Reader::Cram {
+                reader,
+                index,
+                repository,
+                cached,
+                reference,
+            } => {
+                // Whole contigs are loaded to decode against; keep one at a time.
+                if *cached != Some(tid) {
+                    repository.clear();
+                    *cached = Some(tid);
                 }
-                continue;
-            }
-            let a = decode(&rec)?;
-            if a.pos >= end {
-                break;
-            }
-            if a.endpos() > start {
-                out.push(a);
+                fetch_cram(reader, index, repository, &self.header, tid, start, end).map_err(|e| {
+                    // noodles-cram checks each single-reference slice against its MD5
+                    if e.to_string().starts_with("reference sequence checksum mismatch") {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!(
+                                "reference MD5 mismatch: {} is not the reference the CRAM was written against",
+                                reference.display()
+                            ),
+                        )
+                    } else {
+                        e
+                    }
+                })
             }
         }
-        Ok(out)
     }
+}
+
+fn fetch_bam(
+    reader: &mut bam::io::Reader<bgzf::io::Reader<File>>,
+    index: &dyn BinningIndex,
+    tid: usize,
+    start: i64,
+    end: i64,
+) -> io::Result<Vec<Aln>> {
+    // Chunks for a slightly wider interval, then htslib's own test.
+    let lo = Position::new((start.max(0) + 1) as usize).unwrap();
+    let hi = Position::new((end + 1) as usize).unwrap();
+    let interval: Interval = (lo..=hi).into();
+    let chunks = index.query(tid, interval)?;
+    let query = noodles_csi::io::Query::new(reader.get_mut(), chunks);
+    let mut r = bam::io::Reader::from(query);
+    let mut rec = bam::Record::default();
+    let mut out = Vec::new();
+    while r.read_record(&mut rec)? != 0 {
+        let rtid = rec.reference_sequence_id().transpose()?;
+        if rtid != Some(tid) {
+            if rtid.is_none() || rtid.unwrap() > tid {
+                break;
+            }
+            continue;
+        }
+        let a = decode(&rec)?;
+        if a.pos >= end {
+            break;
+        }
+        if a.endpos() > start {
+            out.push(a);
+        }
+    }
+    Ok(out)
+}
+
+/// The containers the index places over a slightly wider interval, each read
+/// once, then htslib's own test on every record. A record is re-encoded as
+/// BAM so that it is decoded by the same code as a BAM's.
+fn fetch_cram(
+    reader: &mut cram::io::Reader<File>,
+    index: &cram::crai::Index,
+    repository: &fasta::Repository,
+    header: &sam::Header,
+    tid: usize,
+    start: i64,
+    end: i64,
+) -> io::Result<Vec<Aln>> {
+    use sam::alignment::io::Write as _;
+    let (lo, hi) = (start.max(0) as usize + 1, end as usize + 1);
+    let mut offsets: Vec<u64> = index
+        .iter()
+        .filter(|r| r.reference_sequence_id() == Some(tid))
+        .filter(|r| {
+            r.alignment_start()
+                .is_some_and(|s| usize::from(s) <= hi && usize::from(s) + r.alignment_span() >= lo)
+        })
+        .map(|r| r.offset())
+        .collect();
+    offsets.sort_unstable();
+    offsets.dedup();
+    let mut container = cram::io::reader::Container::default();
+    let mut writer = bam::io::Writer::from(Vec::new());
+    let mut rec = bam::Record::default();
+    let mut out = Vec::new();
+    for offset in offsets {
+        reader.seek(SeekFrom::Start(offset))?;
+        if reader.read_container(&mut container)? == 0 {
+            break;
+        }
+        let compression_header = container.compression_header()?;
+        for slice in container.slices() {
+            let slice = slice?;
+            let (core, external) = slice.decode_blocks()?;
+            let records = slice.records(repository.clone(), header, &compression_header, &core, &external)?;
+            for record in &records {
+                writer.get_mut().clear();
+                writer.write_alignment_record(header, record)?;
+                bam::io::Reader::from(&writer.get_ref()[..]).read_record(&mut rec)?;
+                if rec.reference_sequence_id().transpose()? != Some(tid) {
+                    continue;
+                }
+                let a = decode(&rec)?;
+                if a.pos < end && a.endpos() > start {
+                    out.push(a);
+                }
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// An indexed FASTA, plain or bgzip-compressed.

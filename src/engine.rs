@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use crate::alleles::{cluster_counts, spread_stats};
-use crate::bam::{Bam, Fasta};
+use crate::bam::{Alignments, Fasta};
 use crate::catalog::{catalogue_notes, Locus};
 use crate::classify::{
     class_units, classify_units, detectability, evidence_state, lower_bound, negative_reliable, over_dispersed,
@@ -708,7 +708,7 @@ fn summarise(members: &[&Call], locus: &Locus, clinical: bool) -> Hap {
 }
 
 pub fn call_locus<'a>(
-    bam: &mut Bam,
+    bam: &mut Alignments,
     fasta: Option<&mut Fasta>,
     locus: &'a Locus,
     sample: &str,
@@ -747,6 +747,7 @@ pub fn call_locus<'a>(
             reach,
         );
     }
+    let cram = bam.is_cram().then(|| bam.path.clone());
     let lr = R::collect_reads(
         bam,
         &contig,
@@ -759,7 +760,11 @@ pub fn call_locus<'a>(
         margin,
         period,
         locus.unit_len > ms.approx_above_len,
-    )?;
+    )
+    .map_err(|e| match &cram {
+        Some(path) => format!("{}: could not decode {} ({e})", locus.id, path.display()),
+        None => e,
+    })?;
     let mut rows: Vec<Row> = Vec::new();
     let mut calls: Vec<Call> = Vec::new();
     let mut partial_lb: Vec<i64> = Vec::new();
@@ -1166,6 +1171,42 @@ pub fn loci_row(res: &LocusResult) -> Vec<String> {
 }
 
 // ----------------------------------------------------------------------------
+// alignment input: BAM or CRAM
+// ----------------------------------------------------------------------------
+
+/// Err unless `ref_path` can decode the CRAM at `loci`: each loci contig must
+/// be in the FASTA at the length the CRAM header gives it. That catches
+/// another assembly before any locus runs; a same-length contig with other
+/// sequence is caught by the slice MD5 as it is decoded. A BAM passes.
+pub fn check_cram_reference(aln: &Alignments, ref_path: &Path, loci: &[&Locus]) -> Result<(), String> {
+    if !aln.is_cram() {
+        return Ok(());
+    }
+    let fa = Fasta::open(ref_path).map_err(|e| format!("{}: {e}", ref_path.display()))?;
+    let chroms: std::collections::BTreeSet<&str> = loci.iter().map(|l| l.chrom.as_str()).collect();
+    for chrom in chroms {
+        // a contig the CRAM lacks is noted by call_locus
+        let Some(contig) = R::resolve_contig(&aln.references, chrom) else {
+            continue;
+        };
+        let Some(i) = fa.references.iter().position(|r| *r == contig) else {
+            return Err(crate::bam::cram_missing_contig(&aln.path, &contig, ref_path));
+        };
+        let cram_len = aln.lengths[aln.references.iter().position(|r| *r == contig).unwrap()];
+        if fa.lengths[i] != cram_len {
+            return Err(crate::bam::cram_length_mismatch(
+                &aln.path,
+                &contig,
+                cram_len,
+                ref_path,
+                fa.lengths[i],
+            ));
+        }
+    }
+    Ok(())
+}
+
+// ----------------------------------------------------------------------------
 // multi-locus driver
 // ----------------------------------------------------------------------------
 
@@ -1180,8 +1221,8 @@ pub fn call_sample<'a>(
     opts: &Options,
     threads: usize,
 ) -> Result<Vec<LocusResult<'a>>, String> {
-    let open = || -> Result<(Bam, Fasta), String> {
-        let bam = Bam::open(bam_path).map_err(|e| format!("{}: {e}", bam_path.display()))?;
+    let open = || -> Result<(Alignments, Fasta), String> {
+        let bam = Alignments::open(bam_path, ref_path).map_err(|e| format!("{}: {e}", bam_path.display()))?;
         let fasta = Fasta::open(ref_path).map_err(|e| format!("{}: {e}", ref_path.display()))?;
         Ok((bam, fasta))
     };

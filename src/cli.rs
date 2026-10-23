@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand};
 
-use crate::bam::{Bam, Fasta};
+use crate::bam::{Alignments, Fasta};
 use crate::catalog::{bundled_release, squash, Catalog, DEFAULT_BUILD};
-use crate::engine::{call_sample, loci_header, loci_row, Options, PER_READ_COLS};
+use crate::engine::{call_sample, check_cram_reference, loci_header, loci_row, Options, PER_READ_COLS};
 use crate::methylation::{CONVENTIONS, DEFAULT_CONVENTION};
 use crate::pyfmt::{fixed, percent0, repr, wrap, Json};
 use crate::qc::{format_report, read_tsv, run_checks};
@@ -32,7 +32,7 @@ fn version() -> &'static str {
 #[derive(Parser)]
 #[command(name = "expansionscout", version = version(), infer_long_args = true,
           about = "Targeted repeat-expansion calling from ONT BAMs, with methylation.\n\n  \
-                   call   genotype one or more catalogue loci from a BAM\n  \
+                   call   genotype one or more catalogue loci from a BAM or CRAM\n  \
                    loci   list the catalogue (id, gene, coordinates, regime, thresholds)\n  \
                    bed    export a BED for selected loci (reference-strand motif in col 4)")]
 struct Cli {
@@ -42,7 +42,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// genotype catalogue loci from a BAM
+    /// genotype catalogue loci from a BAM or CRAM
     Call(Box<CallArgs>),
     /// list catalogue loci
     Loci(LociArgs),
@@ -63,9 +63,10 @@ const CATALOG_HELP: &str =
 
 #[derive(Args)]
 struct CallArgs {
-    #[arg(long)]
+    /// indexed, coordinate-sorted BAM or CRAM; the format is read from the file
+    #[arg(long, alias = "cram")]
     bam: PathBuf,
-    /// indexed reference FASTA
+    /// indexed reference FASTA; for a CRAM, the one it was written against
     #[arg(long = "ref")]
     reference: PathBuf,
     /// output prefix
@@ -303,14 +304,21 @@ fn cmd_call(a: CallArgs) -> Result<i32, String> {
     }
     warn_unmatched_motifs(&loci);
     check_reference_matches_build(&a.reference, &loci, &a.build);
-    let bam = Bam::open(&a.bam).map_err(|e| format!("{}: {e}", a.bam.display()))?;
+    let bam = Alignments::open(&a.bam, &a.reference).map_err(|e| format!("{}: {e}", a.bam.display()))?;
+    check_cram_reference(&bam, &a.reference, &loci)?;
     let sample = match a.sample.clone().filter(|s| !s.is_empty()) {
         Some(s) => s,
         None => bam.sample().unwrap_or_else(|| {
-            a.bam
+            let name = a
+                .bam
                 .file_name()
-                .map(|n| n.to_string_lossy().replace(".bam", ""))
-                .unwrap_or_default()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            [".bam", ".cram"]
+                .iter()
+                .find_map(|ext| name.strip_suffix(ext))
+                .unwrap_or(&name)
+                .to_string()
         }),
     };
     let opts = Options {
@@ -363,7 +371,7 @@ fn cmd_call(a: CallArgs) -> Result<i32, String> {
     }
     write_file(&loci_path, &loci_tsv)?;
 
-    // Contig lengths from the BAM first, then the reference for any the BAM lacks.
+    // Contig lengths from the alignment header first, then the reference for any it lacks.
     let mut contigs: Vec<(String, i64)> = bam
         .references
         .iter()

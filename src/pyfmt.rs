@@ -14,6 +14,23 @@ pub fn fixed(v: f64, nd: usize) -> String {
     format!("{:.*}", nd, v)
 }
 
+/// `f"{n:,}"`.
+pub fn thousands(n: i64) -> String {
+    let digits = n.unsigned_abs().to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    if n < 0 {
+        format!("-{out}")
+    } else {
+        out
+    }
+}
+
 /// Shortest round-trip digits and the decimal exponent, from Rust's `{:e}`,
 /// which uses the same shortest-digits rule as CPython's `repr`.
 fn shortest(v: f64) -> (bool, String, i32) {
@@ -464,6 +481,19 @@ mod tests {
         ];
         for (v, want) in cases {
             assert_eq!(repr(v), want, "{v}");
+        }
+    }
+
+    #[test]
+    fn thousands_matches_python() {
+        for (n, s) in [
+            (0, "0"),
+            (999, "999"),
+            (1000, "1,000"),
+            (248_956_422, "248,956,422"),
+            (-1234, "-1,234"),
+        ] {
+            assert_eq!(thousands(n), s);
         }
     }
 

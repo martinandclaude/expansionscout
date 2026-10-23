@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::io;
 
-use crate::bam::{Aln, Bam, CDEL, CDIFF, CEQUAL, CHARD_CLIP, CINS, CMATCH, CREF_SKIP, CSOFT_CLIP};
+use crate::bam::{Alignments, Aln, CDEL, CDIFF, CEQUAL, CHARD_CLIP, CINS, CMATCH, CREF_SKIP, CSOFT_CLIP};
 
 pub const SPANNING: &str = "spanning";
 pub const SPLIT: &str = "split";
@@ -278,7 +278,7 @@ pub fn resolve_contig(references: &[String], chrom: &str) -> Option<String> {
 /// (`span_window`). (0, 0) changes neither.
 #[allow(clippy::too_many_arguments)]
 pub fn collect_reads(
-    bam: &mut Bam,
+    bam: &mut Alignments,
     chrom: &str,
     start: i64,
     end: i64,

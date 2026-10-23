@@ -1,7 +1,7 @@
 # ExpansionScout
 
-Targeted repeat-expansion calling from Oxford Nanopore (ONT) BAM files,
-with per-allele methylation.
+Targeted repeat-expansion calling from Oxford Nanopore (ONT) BAM or CRAM
+files, with per-allele methylation.
 
 **[martinandclaude.github.io/expansionscout](https://martinandclaude.github.io/expansionscout/)**
 
@@ -61,14 +61,27 @@ machine at hand and puts `expansionscout`, and `es` as a short alias, in
 
 ## Run it
 
-Requires a coordinate-sorted, indexed BAM and the indexed reference FASTA it
-was aligned to. The default catalogue coordinates are GRCh38; for an
-alignment to another assembly, pass `--build` (see below). Methylation output
-additionally requires the BAM to carry MM/ML tags from modification-aware
-basecalling.
+Requires a coordinate-sorted, indexed BAM or CRAM and the indexed reference
+FASTA it was aligned to (plain, or bgzipped with its `.fai` and `.gzi`). The
+default catalogue coordinates are GRCh38; for an alignment to another
+assembly, pass `--build` (see below). Methylation output additionally
+requires the reads to carry MM/ML tags from modification-aware basecalling.
 
 ```bash
 expansionscout call --bam sample.bam --ref hg38.fa.gz --out results/sample
+```
+
+`--bam` also takes a CRAM (`--cram` is the same option); the format is read
+from the file, not its name. A CRAM is decoded against `--ref`, which must
+then be the reference the CRAM was written against: a contig missing from
+the FASTA, or of another length, stops the run before any locus is called,
+and one of the same length but other sequence stops it at the first locus
+there, where the reference no longer matches the checksum the CRAM recorded.
+Reference sequence is only ever read from `--ref`, never fetched over the
+network. The CRAM needs its `.crai` index.
+
+```bash
+expansionscout call --cram sample.cram --ref hg38.fa.gz --out results/sample
 ```
 
 That calls the whole catalogue. For selected loci, by identifier, alias or
@@ -89,7 +102,7 @@ Options for `call`:
 | `--mosaic` | keep minor length modes instead of folding them into alleles |
 | `--ignore-hp` | ignore `HP` haplotype tags and cluster on length alone |
 | `--threads N` | call loci in parallel |
-| `--sample NAME` | the sample name written to the outputs (default: the BAM's read-group `SM`, else its file name) |
+| `--sample NAME` | the sample name written to the outputs (default: the read-group `SM`, else the file name without `.bam` or `.cram`) |
 | `--vcf` | also write `<prefix>.vcf` |
 | `--no-report` | skip the HTML report |
 | `--catalog PATH` | use another catalogue, in STRchive's JSON format (default: the release compiled in, see [Locus catalogue](#locus-catalogue)) |
