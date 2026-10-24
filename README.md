@@ -27,7 +27,7 @@ gh release download --repo martinandclaude/expansionscout   # the latest release
 sha256sum -c expansionscout.sha256                            # expansionscout: OK
 chmod +x expansionscout
 ./expansionscout --version
-# expansionscout 0.1.0 (STRchive v2.26.1 compiled in)
+# expansionscout 0.2.0 (STRchive v2.26.1 compiled in)
 ```
 
 Put it anywhere on your `PATH`, for instance
